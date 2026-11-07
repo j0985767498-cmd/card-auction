@@ -644,7 +644,8 @@ const DEFAULT_CFG={
     {k:'E',label:'E',prob:10,score:-50,cards:['狗庭妮','黑黑']}
   ],
   syn:{
-    ge:{on:true,name:'葛～',cards:['白白','彩潔'],per:10},
+    // type：pts＝每張 C、D 卡加分（隨時計入）、money＝每張 C、D 卡加錢（每張卡只發一次）、both＝兩者都給
+    ge:{on:true,name:'葛～',cards:['白白','彩潔'],type:'pts',per:10,cash:4000},
     glow:{on:true,name:'螢光棒拿來',cards:['汪達','33'],amount:6000},
     pay:{on:true,name:'全支付',cards:['欣魚','瑞恩'],amount:10000},
     pigs:{on:true,name:'黑龍雙豬',cards:['黑黑','狗庭妮'],score:100},
@@ -688,7 +689,7 @@ import { getDatabase, ref, onValue, set, get, update, push, query, limitToLast, 
 
 const SYN_ORDER=['ge','glow','pay','pigs','hui','gamble','sisters','kick'];
 const SYN_PARAMS={
-  ge:[['per','每張 C、D 卡加幾分']],
+  ge:[['per','每張 C、D 卡加幾分'],['cash','每張 C、D 卡加多少元']],
   glow:[['amount','其餘玩家各扣多少元']],
   pay:[['amount','轉移金額']],
   pigs:[['score','兩張卡合計變為幾分']],
@@ -758,7 +759,7 @@ function scheduleBot(){
 function synWorth(s,S,bi){
   switch(s.id){
     case 'pigs':return s.score+100;
-    case 'ge':return s.per*(S.players[bi].cards.filter(c=>['C','D'].includes(tierOf(c).k)).length+5);
+    case 'ge':return ((geHasPts(s)?s.per:0)+(geHasCash(s)?s.cash/(RATE||400):0))*(S.players[bi].cards.filter(c=>['C','D'].includes(tierOf(c).k)).length+5);
     case 'sisters':return 45;
     case 'pay':return 30;
     case 'kick':return 50;
@@ -860,6 +861,7 @@ function normCfg(c){
     const cs=s.cards===undefined?d.cards:toArr(s.cards); x.cards=d.cards.map((_,i)=>String(cs[i]??''));
     for(const [k] of SYN_PARAMS[id])x[k]=numOr(s[k],d[k]);
     if(id==='kick')x.egg=s.egg===undefined?d.egg:!!s.egg;
+    if(id==='ge')x.type=['pts','money','both'].includes(s.type)?s.type:d.type;
     o.syn[id]=x;
   }
   const cm=c.money||{}, ce=c.egg||{};
@@ -891,7 +893,7 @@ function useCfg(c){
 }
 function synDesc(id,s){
   switch(id){
-    case 'ge':return '每持有一張 C 或 D 卡，加 '+s.per+' 分';
+    case 'ge':return '每持有一張 C 或 D 卡，'+geRewardText(s);
     case 'glow':return '其餘玩家各凹 30 支螢光棒，各扣 '+fmt(s.amount)+' 元';
     case 'pay':return '指定一名玩家，將其 '+fmt(s.amount)+' 元轉給自己';
     case 'pigs':return '這兩張卡合計從 -100 分變為 +'+s.score+' 分（負負得正）';
@@ -905,6 +907,21 @@ function synDesc(id,s){
 /* 博弈的五種效果與權重 */
 function gambleOpts(s){
   return [{w:s.w1,t:'自己 +'+fmt(s.m1)+' 元'},{w:s.w2,t:'自己 +'+s.s1+' 分'},{w:s.w3,t:'自己 +'+fmt(s.m2)+' 元'},{w:s.w4,t:'自己 +'+s.s2+' 分'},{w:s.w5,t:'下次得標返還 '+s.rebate+'%'}].map(o=>({...o,w:Math.max(0,o.w)}));
+}
+const geHasPts=s=>s.type!=='money', geHasCash=s=>s.type!=='pts';
+function geRewardText(s){return [geHasPts(s)?'加 '+s.per+' 分（隨時計入總分）':'',geHasCash(s)?'加 '+fmt(s.cash)+' 元（每張卡只發一次）':''].filter(Boolean).join('，並')}
+/* 葛～ 的加錢：持有白白＋彩潔的玩家，手上每張 C、D 卡各發一次錢；卡被搶走不收回，同一張卡回到手上也不重發 */
+function checkGe(S){
+  const g=CFG.syn.ge; if(!g||!g.on||!geHasCash(g)||!g.cash)return;
+  const all=CFG.tiers.flatMap(t=>t.cards);
+  S.players.forEach((p,pi)=>{
+    if(!g.cards.every(c=>p.cards.includes(c)))return;
+    const fresh=p.cards.filter(c=>['C','D'].includes(tierOf(c).k)&&!S.gePaid['p'+pi+'c'+all.indexOf(c)]);
+    if(!fresh.length)return;
+    fresh.forEach(c=>S.gePaid['p'+pi+'c'+all.indexOf(c)]=true);
+    const amt=g.cash*fresh.length; p.money+=amt;
+    log(S,g.name+'：'+p.name+' 持有的 C／D 卡「'+fresh.join('、')+'」各加 '+fmt(g.cash)+' 元，共 '+fmt(amt)+' 元','syn');
+  });
 }
 function validateCfg(c){
   const e=[], all=c.tiers.flatMap(t=>t.cards);
@@ -1002,7 +1019,7 @@ function norm(S){
   S.pool=toArr(S.pool); S.passed=toArr(S.passed); S.log=toArr(S.log); S.synOwner=S.synOwner||{};
   S.queue=toArr(S.queue); S.armed=S.armed||{}; S.events=toArr(S.events); S.evSeq=S.evSeq||0; S.drawn=S.drawn||0;
   for(const k of ['high','actor','last','card','pending','eggOwner','deal'])if(S[k]===undefined)S[k]=null;
-  if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{}; S.brPaid=S.brPaid||{}; S.brOn=S.brOn||{};
+  if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{}; S.brPaid=S.brPaid||{}; S.brOn=S.brOn||{}; S.gePaid=S.gePaid||{};
   S.kickAsk=S.kickAsk||null; S.kicked=S.kicked??null; S.kickUsed=!!S.kickUsed;
   S.rate=S.rate||0;
   if(S.pending)S.pending.opts=toArr(S.pending.opts);
@@ -1134,6 +1151,7 @@ function checkSyn(S,pi){
     if(S.synOwner[s.id]!==undefined)continue;
     if(s.cards.every(c=>p.cards.includes(c))){S.synOwner[s.id]=pi;S.queue.push({id:s.id,p:pi});log(S,p.name+' 湊齊羈絆「'+s.name+'」','synfx',{sid:s.id,p:p.name,cards:s.cards.slice()})}
   }
+  checkGe(S);
   checkBr(S);
 }
 function checkArmed(S){
@@ -1171,7 +1189,7 @@ function applyEffect(S,it){
   const ev=text=>({event:{syn:s.name,owner:p.name,text}});
   if(!(it.id==='hui'&&!it.fire&&p.money>=s.threshold))log(S,p.name+(it.fire?' 的':' 發動')+'羈絆「'+s.name+'」'+(it.fire?'觸發':''),'syn');
   switch(it.id){
-    case 'ge':return ev('之後每持有一張 C 或 D 卡，額外加 '+s.per+' 分（隨時計入總分）。');
+    case 'ge':return ev('之後每持有一張 C 或 D 卡，'+geRewardText(s)+'。');
     case 'pigs':return ev(s.cards.join('與')+'負負得正，兩張卡合計變為 '+s.score+' 分。');
     case 'glow':{
       const lines=others(S,it.p).map(i=>{const q=P[i],d=Math.min(s.amount,q.money);q.money-=d;return q.name+' 扣 '+fmt(d)+' 元'});
@@ -1284,7 +1302,7 @@ function scoreOf(p){
   const has=c=>p.cards.includes(c), pg=CFG.syn.pigs, gs=CFG.syn.ge;
   const pigs=pg.on&&pg.cards.every(has);
   let base=pigs?pg.score:0; for(const c of p.cards)if(!(pigs&&pg.cards.includes(c)))base+=tierOf(c).score;
-  const ge=(gs.on&&gs.cards.every(has))?gs.per*p.cards.filter(c=>['C','D'].includes(tierOf(c).k)).length:0;
+  const ge=(gs.on&&geHasPts(gs)&&gs.cards.every(has))?gs.per*p.cards.filter(c=>['C','D'].includes(tierOf(c).k)).length:0;
   const money=RATE>0?Math.floor(Math.max(0,p.money)/RATE):0, tier=tierInfo(p).total, br=brBonus(p);
   return {base,ge,adj:p.scoreAdj,money,tier,br,total:base+ge+tier+p.scoreAdj+br+money};
 }
@@ -1737,7 +1755,7 @@ function rulesHTML(c,edit){
       '<input type="text" id="cfg-s-'+id+'-name" value="'+esc(s.name)+'" aria-label="羈絆名稱"'+d+'></div>'+
       '<div class="sp">'+s.cards.map((x,j)=>'<div><label for="cfg-s-'+id+'-c'+j+'">卡片 '+(j+1)+'</label><input type="text" id="cfg-s-'+id+'-c'+j+'" value="'+esc(x)+'"'+d+'></div>').join('')+
       SYN_PARAMS[id].map(([k,l])=>'<div><label for="cfg-s-'+id+'-'+k+'">'+l+'</label><input class="num" type="number" id="cfg-s-'+id+'-'+k+'" value="'+s[k]+'"'+d+'></div>').join('')+
-      '</div>'+(id==='kick'?'<div class="syh" style="margin-top:8px"><input type="checkbox" id="cfg-s-kick-egg" '+(s.egg?'checked':'')+' aria-label="計入億萬富翁"'+d+'><span>計入「'+esc(c.egg.name)+'」所需的羈絆數</span></div>':'')+
+      '</div>'+(id==='ge'?'<div style="margin-top:8px"><label for="cfg-s-ge-type" style="font-size:12px;font-weight:500;color:var(--muted)">每張 C、D 卡的獎勵</label><select id="cfg-s-ge-type" class="field" style="padding:8px 10px;font-size:14px"'+d+'>'+[['pts','加分'],['money','加錢'],['both','加分＋加錢']].map(([k,l])=>'<option value="'+k+'"'+(s.type===k?' selected':'')+'>'+l+'</option>').join('')+'</select></div>':'')+(id==='kick'?'<div class="syh" style="margin-top:8px"><input type="checkbox" id="cfg-s-kick-egg" '+(s.egg?'checked':'')+' aria-label="計入億萬富翁"'+d+'><span>計入「'+esc(c.egg.name)+'」所需的羈絆數</span></div>':'')+
       '<div class="muted" style="font-size:12px;margin-top:6px">'+esc(synDesc(id,s))+'</div></div>';}).join('');
   const all=c.tiers.flatMap(t=>t.cards);
   const art=all.map(n=>'<div class="artc">'+cardFace(n,'sm')+(edit?'<div class="acts"><button class="btn" data-act="art-pick" data-v="'+esc(n)+'">'+(ART[artKey(n)]?'更換':'上傳')+'</button>'+(ART[artKey(n)]?'<button class="btn danger" data-act="art-del" data-v="'+esc(n)+'">移除</button>':'')+'</div>':'')+'</div>').join('');
@@ -1816,6 +1834,7 @@ function readCfgForm(){
     s.name=v('cfg-s-'+id+'-name').value.trim()||DEFAULT_CFG.syn[id].name;
     s.cards=s.cards.map((_,j)=>v('cfg-s-'+id+'-c'+j).value.trim());
     if(id==='kick')s.egg=v('cfg-s-kick-egg').checked;
+    if(id==='ge')s.type=v('cfg-s-ge-type').value;
     for(const [k] of SYN_PARAMS[id])s[k]=numOr(v('cfg-s-'+id+'-'+k).value,s[k]);
   }
   return c;
