@@ -602,11 +602,20 @@ body{background:radial-gradient(120% 60% at 15% -10%,color-mix(in srgb,var(--acc
 .fxw.passive>*{pointer-events:none!important;bottom:42vh!important}
 .fxw.passive .bgrid{--gh:18vh}
 .fxw.passive .sub{display:none}
+/* 強制中離：可收合的詢問視窗 */
+.kickhd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.kickhd .kfold{padding:5px 12px;font-size:13px;flex:none}
+.kickm .kickt{display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.3}
+.kickm .kickt small{font-size:12px;font-weight:500;color:var(--muted);white-space:normal}
+#kickbar .kb{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:46;display:flex;align-items:center;gap:10px;
+  padding:6px 6px 6px 16px;border-radius:999px;background:#1f2a44;color:#fff;font-size:14px;font-weight:700;box-shadow:0 10px 26px -8px rgba(0,0,0,.55);white-space:nowrap;animation:fadein .2s both}
+#kickbar .kb .btn{padding:7px 14px;font-size:13px}
 </style>
 </head>
 <body>
 <div id="app"><div class="scroll"><p class="muted">連線中…</p></div></div>
 <div id="ov"></div>
+<div id="kickbar"></div>
 <div id="fx" aria-hidden="true"></div>
 <input type="file" id="artFile" accept="image/*" hidden>
 
@@ -1945,7 +1954,7 @@ function render(){
     UI.turnKey=key;
     if(S.phase==='kickask'&&!UI.kickIv)UI.kickIv=setInterval(kickTick,250);
   }else if(scr==='end'){document.getElementById('endBox').innerHTML=endHTML(S);setDock(canHost()?'<div class="dk-row"><button class="btn primary" style="flex:1" data-act="again">同樣規則再來一局</button><button class="btn" data-act="tolobby">回大廳</button></div>':'<div class="note">等待房主開始下一局…</div>')}
-  renderFeed(); renderOv(S); if(S&&S.phase==='kickask')kickPaint();
+  renderFeed(); renderOv(S); renderKickBar(S); if(S&&S.phase==='kickask')kickPaint();
 }
 function setDock(h){
   const dk=document.getElementById('dk'); if(!dk)return;
@@ -2052,7 +2061,7 @@ function gameDockHTML(S){
     return !isOnline(d.uid)?'<div class="note"><span>'+esc(d.name)+' 離線中</span><button class="btn small" data-act="skip">代為'+(S.phase==='draw'?'抽卡':S.phase==='deal'?'選牌':'翻牌')+'</button></div>':'';
   }
   if(S.phase==='kickask'&&S.kickAsk){
-    return me===S.kickAsk.pi?'<div class="note"><span>請在視窗中選擇是否使用「'+esc(CFG.syn.kick.name)+'」</span></div>':'<div class="note"><span>等待 '+esc(P[S.kickAsk.pi].name)+' 決定是否使用「'+esc(CFG.syn.kick.name)+'」…</span><b class="num"><span class="kicksec">'+kickLeft(S)+'</span> 秒</b></div>';
+    return me===S.kickAsk.pi?'<div class="note"><span>'+(UI.kickFold===S.kickAsk.until?'&nbsp;':'請在視窗中選擇是否使用「'+esc(CFG.syn.kick.name)+'」')+'</span></div>':'<div class="note"><span>等待 '+esc(P[S.kickAsk.pi].name)+' 決定是否使用「'+esc(CFG.syn.kick.name)+'」…</span><b class="num"><span class="kicksec">'+kickLeft(S)+'</span> 秒</b></div>';
   }
   if(S.phase==='choose'){
     const c=P[S.pending.pi];
@@ -2209,7 +2218,7 @@ let lastOv='';
 function renderOv(S){
   const ov=document.getElementById('ov'); let h='';
   if(UI.confirmLeave)h='<div class="ovl"><div class="modal"><div class="t">離開房間？</div><p>遊戲進行中離開，其他玩家可以代你 PASS；用同一個瀏覽器重新輸入房號即可回來。</p><div style="display:flex;gap:8px"><button class="btn danger" data-act="leave-yes">離開</button><button class="btn primary" data-act="leave-no">留下</button></div></div></div>';
-  else if(S&&S.phase==='kickask'&&S.kickAsk&&myIdx(S)===S.kickAsk.pi)h=kickModalHTML(S);
+  else if(S&&S.phase==='kickask'&&S.kickAsk&&myIdx(S)===S.kickAsk.pi&&UI.kickFold!==S.kickAsk.until)h=kickModalHTML(S);
   else if(UI.reveal&&S)h='<div class="fxw" data-fx="'+UI.reveal.id+'" data-born="'+UI.reveal.at+'">'+UI.reveal.html+'</div>';
   else if(S&&S.phase==='choose'&&S.pending&&myIdx(S)===S.pending.pi&&(S.pending.type||'pay')!=='pay'){
     const pd=S.pending, sn=CFG.syn.sisters.name;
@@ -2249,12 +2258,28 @@ function renderOv(S){
   if(fid){const el=document.getElementById(fid);if(el){if(el.type!=='checkbox'&&val!==null)el.value=val;el.focus()}}
   applyPassive(S); kickPaint();
 }
+/* 這張卡對某位玩家的用途：湊齊羈絆、支線達到下一階、等級羈絆升階，方便判斷要讓誰中離 */
+function kickHints(S,qi,c){
+  const q=S.players[qi], out=[];
+  for(const s of SYN)if(s.cards.includes(c)&&s.cards.filter(x=>x!==c).every(x=>q.cards.includes(x)))out.push('湊齊「'+s.name+'」');
+  for(const b of brsOf(c)){const k=brCount(q,b), t=brTiers().find(t=>t.n===k+1);if(t)out.push('「'+b.name+'」達 '+t.n+' 張（'+(t.type==='money'?'$'+fmt(t.val):'+'+t.val+' 分')+'）')}
+  {const before=tierInfo(q).total; q.cards.push(c); const after=tierInfo(q).total; q.cards.pop(); if(after>before)out.push('等級羈絆 +'+(after-before)+' 分')}
+  {const kk=CFG.syn.kick; if(kk&&kk.on&&kk.cards.includes(c)){const m=kk.cards.filter(x=>x!==c&&q.cards.includes(x)).length+1;if((kk.partN>0&&m===kk.partN&&!S.kickGot['p'+qi+'a'])||(m===kk.cards.length&&!S.kickGot['p'+qi+'b']))out.push('獲得「'+kk.name+'」次數')}}
+  return out;
+}
 function kickModalHTML(S){
   const k=CFG.syn.kick, me=myIdx(S);
-  return '<div class="ovl"><div class="modal synm kickm" role="dialog" aria-label="'+esc(k.name)+'"><div class="k">'+esc(k.name)+'・你還有 '+kickLeftN(S,me)+' 次</div><div class="t">要使用嗎？</div>'+
-    '<div class="mid">'+cardFace(S.card,'sm')+'</div><p>指定一名玩家，這次競標強制 PASS。剩 <b class="num kicksec"></b> 秒，時間到視為不使用。</p><div class="opts">'+
-    kickTargets(S,me).map(i=>'<button class="btn big" data-act="kick" data-v="'+i+'">讓 '+esc(S.players[i].name)+' 強制 PASS</button>').join('')+
+  return '<div class="ovl"><div class="modal synm kickm" role="dialog" aria-label="'+esc(k.name)+'"><div class="kickhd"><div class="k">'+esc(k.name)+'・你還有 '+kickLeftN(S,me)+' 次</div><button class="btn kfold" data-act="kick-fold" aria-label="收合，先看看場上狀況">收合 ▾</button></div><div class="t">要使用嗎？</div>'+
+    '<div class="mid">'+cardFace(S.card,'sm')+'</div><p>指定一名玩家，這次競標強制 PASS。剩 <b class="num kicksec"></b> 秒，時間到視為不使用。可以先收合，查看卡池・羈絆或玩家手牌再決定。</p><div class="opts">'+
+    kickTargets(S,me).map(i=>{const hs=kickHints(S,i,S.card);return '<button class="btn big kickt" data-act="kick" data-v="'+i+'">讓 '+esc(S.players[i].name)+' 強制 PASS<small>'+(hs.length?'這張卡可以：'+esc(hs.join('、')):'這張卡對他沒有特別加成')+'</small></button>'}).join('')+
     '<button class="btn" data-act="kick" data-v="no">不使用</button></div></div></div>';
+}
+/* 收合時浮在畫面下方的小膠囊：倒數＋展開按鈕，蓋在卡池・羈絆頁等視窗之上 */
+function renderKickBar(S){
+  const el=document.getElementById('kickbar'); if(!el)return;
+  const show=S&&S.phase==='kickask'&&S.kickAsk&&myIdx(S)===S.kickAsk.pi&&UI.kickFold===S.kickAsk.until;
+  const h=show?'<div class="kb" role="status"><span>'+esc(CFG.syn.kick.name)+'・剩 <b class="num kicksec"></b> 秒</span><button class="btn primary" data-act="kick-open">展開選擇</button></div>':'';
+  if(el.innerHTML!==h)el.innerHTML=h;
 }
 /* 倒數只更新數字，不重畫視窗，避免按鈕被替換而點不到 */
 function kickPaint(){const st=room&&room.state;if(!st||st.phase!=='kickask'||!st.kickAsk)return;const left=Math.max(0,Math.ceil((st.kickAsk.until-NOW())/1000));document.querySelectorAll('.kicksec').forEach(e=>{if(e.textContent!==String(left))e.textContent=left})}
@@ -2302,6 +2327,8 @@ document.addEventListener('click',async e=>{
     case 'zoom':UI.sheet={type:'zoom',v};render();break;
     case 'sheet-close':case 'sheet-bg':UI.sheet=null;render();break;
     case 'reveal-close':if(canCloseFx())nextOverlay();break;
+    case 'kick-fold':{const st=room&&room.state;if(st&&st.kickAsk){UI.kickFold=st.kickAsk.until;render()}break}
+    case 'kick-open':UI.kickFold=null;UI.sheet=null;render();break;
     case 'kick':{const kv=v;tx(S=>(S.phase!=='kickask'||!S.kickAsk||myIdx(S)!==S.kickAsk.pi)?'無法選擇。':gKick(S,kv==='no'?'no':Number(kv)));break}
     case 'snd':local.sound=!soundOn();saveLocal();if(soundOn()){ac();play('turn')}lastOv='';render();break;
     case 'sound':UI.sheet={type:'sound'};render();break;
