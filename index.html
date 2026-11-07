@@ -670,6 +670,8 @@ const DEFAULT_CFG={
   money:{mode:'auto',rate:400},
   // 競標時在卡片資訊旁顯示「卡片分數 × 換算價」的金額
   showVal:true,
+  // 優先出現的卡：保證在前 by 張內全部出現（各卡平均分散在這段範圍內）；by＝0 等於關閉
+  early:{on:true,cards:['小魚','花花','149'],by:15},
   // 集滿羈絆彩蛋
   egg:{on:true,name:'億萬富翁',need:5,money:10000000},
   // 等級羈絆：持有同等級卡的張數達到門檻，獲得對應的總分
@@ -884,6 +886,8 @@ function normCfg(c){
   o.money={mode:['auto','fixed','off'].includes(cm.mode)?cm.mode:D.money.mode,rate:numOr(cm.rate,D.money.rate)};
   o.egg={on:ce.on===undefined?D.egg.on:!!ce.on,name:String(ce.name||D.egg.name),need:Math.round(numOr(ce.need,D.egg.need)),money:numOr(ce.money,D.egg.money)};
   o.showVal=c.showVal===undefined?D.showVal:!!c.showVal;
+  const cy=c.early||{};
+  o.early={on:cy.on===undefined?D.early.on:!!cy.on,cards:cy.cards===undefined?D.early.cards.slice():toArr(cy.cards).map(x=>String(x).trim()).filter(Boolean),by:Math.max(0,Math.round(numOr(cy.by,D.early.by)))};
   const cb=c.br||{}, cl=toArr(cb.list), ctr=toArr(cb.tiers);
   o.br={on:cb.on===undefined?D.br.on:!!cb.on,egg:cb.egg===undefined?D.br.egg:!!cb.egg,
     tiers:D.br.tiers.map((d,i)=>{const t=ctr[i]||{};return {n:Math.max(0,Math.round(numOr(t.n,d.n))),type:['money','pts'].includes(t.type)?t.type:d.type,val:numOr(t.val,d.val)}}),
@@ -955,6 +959,11 @@ function validateCfg(c){
   if(c.money.mode!=='off'&&totalPts(c)<=0)e.push('卡片總分不是正數，無法換算剩餘資金。');
   if(c.money.mode==='fixed'&&c.money.rate<=0)e.push('固定換算價需大於 0。');
   if(c.egg.on&&(c.egg.need<1||c.egg.need>7))e.push('彩蛋需要的羈絆數要在 1～7 之間。');
+  if(c.early.on&&c.early.cards.length){
+    const all=c.tiers.flatMap(t=>t.cards), miss=c.early.cards.filter(x=>!all.includes(x));
+    if(miss.length)e.push('優先出現的卡「'+miss.join('、')+'」不在卡池裡。');
+    if(c.early.by<c.early.cards.length||c.early.by>all.length)e.push('「保證在前幾張內出現」要在 '+c.early.cards.length+'～'+all.length+' 之間。');
+  }
   e.push(...brErrors(c));
   return e;
 }
@@ -1040,6 +1049,15 @@ function norm(S){
 }
 function log(S,t,k,x){S.log.unshift({t,k:k||'',ts:NOW(),...(x||{})});if(S.log.length>80)S.log.length=80}
 function pushEvent(S,ev){S.evSeq++;S.events.push({...ev,id:S.evSeq});if(S.events.length>8)S.events.shift()}
+/* 優先出現：還剩 k 張優先卡、距離期限還有 n 次抽卡時，本次以 k/n 的機率直接抽優先卡。
+   這等於把剩下的優先卡隨機分散到期限前的每一次抽卡，期限到時一定已全部出現 */
+function earlyPick(S){
+  const e=CFG.early; if(!e||!e.on||!e.by)return null;
+  const rem=e.cards.filter(c=>S.pool.includes(c)), slots=e.by-S.drawn;
+  if(!rem.length||slots<=0)return null;
+  if(Math.random()>=Math.min(1,rem.length/slots))return null;
+  const c=rem[rnd(rem.length)]; S.pool=S.pool.filter(x=>x!==c); return c;
+}
 function drawFromPool(S){
   const avail=TIERS.filter(t=>t.prob>0&&t.cards.some(c=>S.pool.includes(c)));
   const list=avail.length?avail:TIERS.filter(t=>t.cards.some(c=>S.pool.includes(c)));
@@ -1063,10 +1081,11 @@ function newGame(players,cfg){
 function gDraw(S,peek){
   if(S.phase!=='draw')return '現在不是抽卡階段。';
   if(peek&&CFG.deal.on&&S.pool.length>1){
-    const opts=[]; for(let i=0;i<3&&S.pool.length;i++){const x=drawFromPool(S);if(x)opts.push(x)}
-    S.deal=opts; S.phase='deal'; S.actor=null; return null;
+    const opts=[], f=earlyPick(S); for(let i=0;i<(f?2:3)&&S.pool.length;i++){const x=drawFromPool(S);if(x)opts.push(x)}
+    if(f)opts.splice(rnd(opts.length+1),0,f);
+    S.deal=opts; S.dealF=f||null; S.phase='deal'; S.actor=null; return null;
   }
-  const c=drawFromPool(S); if(!c)return '卡池已空。';
+  const c=earlyPick(S)||drawFromPool(S); if(!c)return '卡池已空。';
   S.card=c; S.drawn++; S.passed=[]; S.high=null; S.bid=0; S.kicked=[];
   if(peek&&!CFG.deal.on){S.phase='peek';S.actor=null;return null}
   return afterReveal(S);
@@ -1074,8 +1093,11 @@ function gDraw(S,peek){
 function gReveal(S){if(S.phase!=='peek')return '現在不能翻牌。';return afterReveal(S)}
 function gPick(S,i){
   if(S.phase!=='deal'||!S.deal)return '現在不能選牌。';
-  const c=S.deal[i]; if(!c)return '無效的選擇。';
-  S.pool.push(...S.deal.filter((x,j)=>j!==i)); S.deal=null;
+  if(!S.deal[i])return '無效的選擇。';
+  /* 牌面朝下時三張都看不到、選哪張等於隨機；若這次發牌含優先卡，就讓翻開的是它（收回的兩張不公開，玩家無從分辨） */
+  let k=i; if(S.dealF&&!CFG.deal.up){const j=S.deal.indexOf(S.dealF);if(j>=0)k=j}
+  const c=S.deal[k];
+  S.pool.push(...S.deal.filter((x,j)=>j!==k)); S.deal=null; S.dealF=null;
   S.card=c; S.drawn++; S.passed=[]; S.high=null; S.bid=0; S.kicked=[];
   return afterReveal(S);
 }
@@ -1808,6 +1830,10 @@ function rulesHTML(c,edit){
     '<div class="sum muted">卡片總分 '+totalPts(c)+' 分。'+(c.money.mode==='off'?'':[2,3,4,5,6].map(n=>{const m=moneySetup(c,n);return n+' 人：'+(c.money.mode==='fixed'?'起始 '+fmt(m.start):'每 '+fmt(m.rate)+' 元＝1 分')}).join('；'))+(c.money.mode==='fixed'?'（「起始資金」欄位在此模式不使用）':'')+'</div>'+
     '<h3>抽卡方式</h3><div class="sy"><div class="syh"><input type="checkbox" id="cfg-deal-on" '+(c.deal.on?'checked':'')+' aria-label="三選一"'+d+'><span>三選一：發三張牌讓抽卡者選</span></div>'+
     '<div class="syh" style="margin-top:6px"><input type="checkbox" id="cfg-deal-up" '+(c.deal.up?'checked':'')+' aria-label="牌面朝上"'+d+(c.deal.on?'':' disabled')+'><span>三張牌面朝上（所有人都看得到再選）</span></div></div>'+
+    '<h3>優先出現的卡</h3><div class="sy'+(c.early.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-early-on" '+(c.early.on?'checked':'')+' aria-label="啟用優先出現"'+d+'><span>讓指定的卡在前期出現</span></div>'+
+      '<div style="margin-top:8px"><label for="cfg-early-cards" style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:2px">卡片（頓號或逗號分隔）</label><textarea id="cfg-early-cards" rows="2"'+d+'>'+esc(c.early.cards.join('、'))+'</textarea></div>'+
+      '<div class="sp"><div><label for="cfg-early-by">保證在前幾張內全部出現</label><input class="num" type="number" min="0" id="cfg-early-by" value="'+c.early.by+'"'+d+'></div></div>'+
+      '<div class="muted" style="font-size:12px;margin-top:6px">這些卡會隨機分散在前 '+c.early.by+' 張之間出現，不是固定順序，所以仍然猜不到下一張是什麼。三選一牌面朝上時，優先卡會出現在三張選項中，但抽卡者可以選擇不拿它，所以不一定在期限內出現。</div></div>'+
     '<h3>等級羈絆</h3>'+c.tsyn.map((t,i)=>'<div class="sy'+(t.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-ts'+i+'-on" '+(t.on?'checked':'')+' aria-label="啟用"'+d+'><input type="text" id="cfg-ts'+i+'-name" value="'+esc(t.name)+'" aria-label="名稱"'+d+'><span class="muted" style="white-space:nowrap">'+t.tier+' 級</span></div>'+
       '<div class="sp"><div><label for="cfg-ts'+i+'-th">門檻張數（用 / 分隔）</label><input type="text" id="cfg-ts'+i+'-th" value="'+t.th.join('/')+'"'+d+'></div><div><label for="cfg-ts'+i+'-bo">對應總分（用 / 分隔）</label><input type="text" id="cfg-ts'+i+'-bo" value="'+t.bonus.join('/')+'"'+d+'></div></div></div>').join('')+
     '<h3>集滿羈絆彩蛋</h3><div class="sy'+(c.egg.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-egg-on" '+(c.egg.on?'checked':'')+' aria-label="啟用彩蛋"'+d+'><input type="text" id="cfg-egg-name" value="'+esc(c.egg.name)+'" aria-label="彩蛋名稱"'+d+'></div>'+
@@ -1858,6 +1884,7 @@ function readCfgForm(){
   c.money={mode:v('cfg-money-mode').value,rate:numOr(v('cfg-money-rate').value,c.money.rate)};
   c.showVal=v('cfg-showval').checked;
   c.deal={on:v('cfg-deal-on').checked,up:v('cfg-deal-up').checked};
+  c.early={on:v('cfg-early-on').checked,cards:v('cfg-early-cards').value.split(/[、,，\n]+/).map(x=>x.trim()).filter(Boolean),by:Math.max(0,Math.round(numOr(v('cfg-early-by').value,c.early.by)))};
   c.tsyn=c.tsyn.map((t,i)=>({on:v('cfg-ts'+i+'-on').checked,name:v('cfg-ts'+i+'-name').value.trim()||DEFAULT_CFG.tsyn[i].name,tier:t.tier,th:v('cfg-ts'+i+'-th').value,bonus:v('cfg-ts'+i+'-bo').value}));
   c.egg={on:v('cfg-egg-on').checked,name:v('cfg-egg-name').value.trim()||DEFAULT_CFG.egg.name,need:Math.round(numOr(v('cfg-egg-need').value,c.egg.need)),money:numOr(v('cfg-egg-money').value,c.egg.money)};
   c.br={on:v('cfg-br-on').checked,egg:v('cfg-br-egg').checked,
@@ -2199,7 +2226,7 @@ function infoHTML(S){
       '<div class="d">'+brTierText()+(CFG.br.egg?'；集齊計入'+esc(CFG.egg.name):'')+'</div>'+
       (cnt.length?'<div class="tsrow">'+cnt.map(x=>'<span class="tsp'+(brTiers().some(t=>x.k>=t.n)?' on':'')+'">'+esc(x.q.name)+' '+x.k+' 張</span>').join('')+'</div>':'')+
       '<div class="gcards wrap">'+cards+'</div></div>'}).join('');
-  else b='<dl class="kv"><dt>起始資金</dt><dd class="num">'+fmt(moneySetup(CFG,S.players.length).start)+'</dd><dt>資金換算</dt><dd>'+(RATE?'每 '+fmt(RATE)+' 元＝1 分':'不計分')+'</dd>'+CFG.tsyn.filter(t=>t.on).map(t=>'<dt>'+esc(t.name)+'</dt><dd>'+t.tier+' 級 '+t.th.join('／')+' 張：+'+t.bonus.join('／+')+' 分</dd>').join('')+(CFG.egg.on?'<dt>'+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd>':'')+(brList().length?'<dt>支線</dt><dd>'+brList().length+' 條；'+brTierText()+'</dd>':'')+'<dt>起標價</dt><dd class="num">'+fmt(CFG.openBid)+'</dd><dt>最小加價</dt><dd class="num">'+fmt(CFG.step)+'</dd></dl>'+
+  else b='<dl class="kv"><dt>起始資金</dt><dd class="num">'+fmt(moneySetup(CFG,S.players.length).start)+'</dd><dt>資金換算</dt><dd>'+(RATE?'每 '+fmt(RATE)+' 元＝1 分':'不計分')+'</dd>'+CFG.tsyn.filter(t=>t.on).map(t=>'<dt>'+esc(t.name)+'</dt><dd>'+t.tier+' 級 '+t.th.join('／')+' 張：+'+t.bonus.join('／+')+' 分</dd>').join('')+(CFG.egg.on?'<dt>'+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd>':'')+(CFG.early.on&&CFG.early.cards.length&&CFG.early.by?'<dt>優先出現</dt><dd>'+esc(CFG.early.cards.join('、'))+' 會在前 '+CFG.early.by+' 張內出現</dd>':'')+(brList().length?'<dt>支線</dt><dd>'+brList().length+' 條；'+brTierText()+'</dd>':'')+'<dt>起標價</dt><dd class="num">'+fmt(CFG.openBid)+'</dd><dt>最小加價</dt><dd class="num">'+fmt(CFG.step)+'</dd></dl>'+
     '<p class="muted" style="font-size:13px">輪流抽卡，抽卡者必須先起標；PASS 後本張卡不能再出價，資金不足會被迫 PASS。卡池抽完時總分最高者獲勝。</p>';
   return sheet('卡池與羈絆',tabs+'<div class="sh-b">'+b+'</div>',true);
 }
