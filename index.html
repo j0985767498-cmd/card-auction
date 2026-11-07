@@ -654,7 +654,8 @@ const DEFAULT_CFG={
     gamble:{on:true,name:'博弈',cards:['賴玉琳','龍哥'],m1:20000,w1:30,s1:40,w2:30,m2:30000,w3:5,s2:60,w4:5,rebate:50,w5:30},
     sisters:{on:true,name:'姐妹丼',cards:['佩佩','佩佩的姊姊']},
     // 三張卡的羈絆：本局可用一次，卡片翻開時指定一名其他玩家強制 PASS 該次競標。sec＝詢問倒數秒數；egg＝是否計入億萬富翁
-    kick:{on:true,name:'強制中離',cards:['小魚','花花','149'],sec:8,egg:true}
+    // partN＝持有幾張時先獲得 partUses 次（0＝停用）；集齊全部時再獲得 fullUses 次。次數用完為止，卡被搶走不收回
+    kick:{on:true,name:'強制中離',cards:['小魚','花花','149'],sec:8,partN:2,partUses:1,fullUses:1,egg:true}
   },
   // 剩餘資金換算：mode = auto（起始資金固定，換算價依人數自動算）／fixed（換算價固定，起始資金依人數調整）／off（不計分）
   money:{mode:'auto',rate:400},
@@ -696,7 +697,7 @@ const SYN_PARAMS={
   hui:[['threshold','資金低於多少才觸發']],
   gamble:[['m1','效果 1：加多少元'],['w1','效果 1 機率 %'],['s1','效果 2：加多少分'],['w2','效果 2 機率 %'],['m2','效果 3：加多少元'],['w3','效果 3 機率 %'],['s2','效果 4：加多少分'],['w4','效果 4 機率 %'],['rebate','效果 5：返還 %'],['w5','效果 5 機率 %']],
   sisters:[],
-  kick:[['sec','詢問倒數秒數']]
+  kick:[['partN','持有幾張時先獲得'],['partUses','先獲得幾次'],['fullUses','集齊時再獲得幾次'],['sec','詢問倒數秒數']]
 };
 const SYN_COLOR={ge:'#1D7C70',glow:'#D98A12',pay:'#2F7FD1',pigs:'#9B392F',hui:'#8E5BD6',gamble:'#E4572E',sisters:'#D6457D',kick:'#475569'};
 const GLOW={SS:'#F2C94C',S:'#FF5FA2',A:'#9B7BFF',B:'#4DA3FF',C:'#3CCFB9',D:'#B7BC8E',E:'#C0574B'};
@@ -777,6 +778,7 @@ function cardWorth(S,bi,c){
     else if(own.every(o=>o>=0&&o===own[0]))pts+=w*0.4;
     else if(own.every(o=>o===bi||o<0))pts+=w*0.25*(1+own.filter(o=>o===bi).length)/own.length;
   }
+  {const kk=CFG.syn.kick; if(kk&&kk.on&&kk.partN>0&&kk.cards.includes(c)&&!S.kickGot['p'+bi+'a']&&kk.cards.filter(x=>x!==c&&p.cards.includes(x)).length+1===kk.partN)pts+=25*kk.partUses;}
   {const before=tierInfo(p).total; p.cards.push(c); const after=tierInfo(p).total; p.cards.pop(); pts+=after-before;}
   const bv=brValue(S,bi,c); pts+=bv.pts;
   const money=S.players.reduce((a,q)=>a+q.money,0);
@@ -792,7 +794,7 @@ function botValue(S,bi,c){
 /* 電腦是否使用強制中離：挑「最想要這張卡」的對手，價值夠高（或接近遊戲尾聲）才用 */
 function botKick(S){
   const pi=S.kickAsk.pi, c=S.card; let best=-1,bw=0,rate=1;
-  S.players.forEach((q,qi)=>{if(qi===pi)return;const r=cardWorth(S,qi,c);rate=r.rate||rate;if(r.worth>bw){bw=r.worth;best=qi}});
+  S.players.forEach((q,qi)=>{if(!kickTargets(S,pi).includes(qi))return;const r=cardWorth(S,qi,c);rate=r.rate||rate;if(r.worth>bw){bw=r.worth;best=qi}});
   const need=rate*(S.pool.length<=6?30:70);
   return best>=0&&bw>=need?best:'no';
 }
@@ -900,7 +902,7 @@ function synDesc(id,s){
     case 'hui':return '資金低於 '+fmt(s.threshold)+' 元時，與資金最高者合計後平分；集齊時未達條件會保留到達成為止';
     case 'gamble':{const W=gambleOpts(s),tot=W.reduce((a,o)=>a+o.w,0)||1;return '隨機一種：'+W.map(o=>o.t+'（'+Math.round(o.w/tot*1000)/10+'%）').join('／')}
     case 'sisters':return '翻開卡池三張，挑一張帶走；卡池空了就改成從其他玩家手上搶一張';
-    case 'kick':return '本局可用一次：卡片翻開時，指定一名其他玩家這次競標強制 PASS（詢問倒數 '+s.sec+' 秒）'+(s.egg?'；計入億萬富翁':'');
+    case 'kick':return (s.partN>0&&s.partUses>0?'持有 '+s.partN+' 張時獲得 '+s.partUses+' 次、':'')+'集齊 '+s.cards.length+' 張時'+(s.partN>0&&s.partUses>0?'再':'')+'獲得 '+s.fullUses+' 次：卡片翻開時，指定一名其他玩家這次競標強制 PASS（詢問倒數 '+s.sec+' 秒）'+(s.egg?'；集齊計入億萬富翁':'');
   }
   return '';
 }
@@ -940,6 +942,7 @@ function validateCfg(c){
   }
   if(c.syn.gamble.on){const g=c.syn.gamble;if([g.w1,g.w2,g.w3,g.w4,g.w5].some(w=>w<0))e.push('「'+g.name+'」的機率不能是負數。');else if(g.w1+g.w2+g.w3+g.w4+g.w5<=0)e.push('「'+g.name+'」的機率合計要大於 0。');if(g.rebate<0||g.rebate>100)e.push('「'+g.name+'」的返還 % 要在 0～100 之間。')}
   if(c.syn.kick.on&&(c.syn.kick.sec<3||c.syn.kick.sec>60))e.push('「'+c.syn.kick.name+'」的詢問倒數要在 3～60 秒之間。');
+  if(c.syn.kick.on){const k=c.syn.kick;if(k.partN<0||k.partN>=k.cards.length)e.push('「'+k.name+'」的「持有幾張時先獲得」要在 0～'+(k.cards.length-1)+' 之間（0＝停用）。');if(k.partUses<0||k.fullUses<0)e.push('「'+k.name+'」的獲得次數不能是負數。')}
   if(c.money.mode!=='off'&&totalPts(c)<=0)e.push('卡片總分不是正數，無法換算剩餘資金。');
   if(c.money.mode==='fixed'&&c.money.rate<=0)e.push('固定換算價需大於 0。');
   if(c.egg.on&&(c.egg.need<1||c.egg.need>7))e.push('彩蛋需要的羈絆數要在 1～7 之間。');
@@ -1020,7 +1023,7 @@ function norm(S){
   S.queue=toArr(S.queue); S.armed=S.armed||{}; S.events=toArr(S.events); S.evSeq=S.evSeq||0; S.drawn=S.drawn||0;
   for(const k of ['high','actor','last','card','pending','eggOwner','deal'])if(S[k]===undefined)S[k]=null;
   if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{}; S.brPaid=S.brPaid||{}; S.brOn=S.brOn||{}; S.gePaid=S.gePaid||{};
-  S.kickAsk=S.kickAsk||null; S.kicked=S.kicked??null; S.kickUsed=!!S.kickUsed;
+  S.kickAsk=S.kickAsk||null; S.kicked=S.kicked==null?[]:typeof S.kicked==='number'?[S.kicked]:toArr(S.kicked); S.kickCharges=S.kickCharges||{}; S.kickGot=S.kickGot||{};
   S.rate=S.rate||0;
   if(S.pending)S.pending.opts=toArr(S.pending.opts);
   S.drawer=S.drawer||0; S.bid=S.bid||0; S.pendingNext=!!S.pendingNext;
@@ -1055,7 +1058,7 @@ function gDraw(S,peek){
     S.deal=opts; S.phase='deal'; S.actor=null; return null;
   }
   const c=drawFromPool(S); if(!c)return '卡池已空。';
-  S.card=c; S.drawn++; S.passed=[]; S.high=null; S.bid=0; S.kicked=null;
+  S.card=c; S.drawn++; S.passed=[]; S.high=null; S.bid=0; S.kicked=[];
   if(peek&&!CFG.deal.on){S.phase='peek';S.actor=null;return null}
   return afterReveal(S);
 }
@@ -1064,36 +1067,57 @@ function gPick(S,i){
   if(S.phase!=='deal'||!S.deal)return '現在不能選牌。';
   const c=S.deal[i]; if(!c)return '無效的選擇。';
   S.pool.push(...S.deal.filter((x,j)=>j!==i)); S.deal=null;
-  S.card=c; S.drawn++; S.passed=[]; S.high=null; S.bid=0; S.kicked=null;
+  S.card=c; S.drawn++; S.passed=[]; S.high=null; S.bid=0; S.kicked=[];
   return afterReveal(S);
 }
-/* 強制中離：持有者尚未使用、在線、且有其他玩家時，競標開始前先詢問 */
-function kickReady(S){
-  const k=CFG.syn.kick, o=S.synOwner.kick;
-  return !!(k&&k.on&&o!==undefined&&o!==null&&!S.kickUsed&&S.players[o]&&isOnline(S.players[o].uid)&&S.players.length>1);
+/* 強制中離：剩餘次數＞0、在線、且還有可指定對象的玩家，依抽卡者起的順序逐一詢問；每人每張卡最多用一次 */
+const kickLeftN=(S,pi)=>S.kickCharges['p'+pi]||0;
+const kickTargets=(S,pi)=>S.players.map((_,i)=>i).filter(i=>i!==pi&&!S.kicked.includes(i));
+function kickQueue(S){
+  const k=CFG.syn.kick, n=S.players.length; if(!k||!k.on||n<2)return [];
+  const out=[]; for(let i=0;i<n;i++){const pi=(S.drawer+i)%n;if(kickLeftN(S,pi)>0)out.push(pi)} return out;
+}
+function kickAskNext(S,list){
+  while(list.length){
+    const pi=list.shift(), p=S.players[pi];
+    if(p&&kickLeftN(S,pi)>0&&isOnline(p.uid)&&kickTargets(S,pi).length){S.phase='kickask';S.actor=null;S.kickAsk={pi,rest:list,until:NOW()+Math.round(CFG.syn.kick.sec*1000)};return null}
+  }
+  S.kickAsk=null; return beginAuction(S);
+}
+/* 依持有張數發放次數：先到 partN 張發 partUses 次、集齊發 fullUses 次；每位玩家每階每局一次 */
+function checkKick(S){
+  const k=CFG.syn.kick; if(!k||!k.on)return;
+  S.players.forEach((p,pi)=>{
+    const held=k.cards.filter(c=>p.cards.includes(c)), n=held.length;
+    const give=(key,u,head,fx)=>{
+      if(S.kickGot[key])return; S.kickGot[key]=true; if(u<=0)return;
+      S.kickCharges['p'+pi]=kickLeftN(S,pi)+u;
+      log(S,p.name+' '+head+'，獲得 '+u+' 次「'+k.name+'」（目前共 '+kickLeftN(S,pi)+' 次）',fx?'kickfx':'syn',{p:p.name,cards:held,u,tot:kickLeftN(S,pi)});
+    };
+    if(k.partN>0&&n>=k.partN)give('p'+pi+'a',k.partUses,'持有「'+k.name+'」'+k.partN+' 張',true);
+    if(n>=k.cards.length)give('p'+pi+'b',k.fullUses,'集齊「'+k.name+'」',S.synOwner.kick!==pi);
+  });
 }
 function afterReveal(S){
   const c=S.card, d=S.players[S.drawer], t=tierOf(c);
   log(S,d.name+' 抽出 '+t.label+'「'+c+'」','draw',{c,tk:t.k,p:d.name});
-  if(kickReady(S)){S.phase='kickask';S.actor=null;S.kickAsk={pi:S.synOwner.kick,until:NOW()+Math.round(CFG.syn.kick.sec*1000)};return null}
-  return beginAuction(S);
+  return kickAskNext(S,kickQueue(S));
 }
 /* v：'no' 或被指定玩家的索引 */
 function gKick(S,v){
   if(S.phase!=='kickask'||!S.kickAsk)return '現在不需要決定。';
   const pi=S.kickAsk.pi, p=S.players[pi];
   if(v!=='no'){
-    const ti=Number(v); if(!Number.isInteger(ti)||ti===pi||!S.players[ti])return '無效的選擇。';
-    S.kickUsed=true; S.kicked=ti;
-    log(S,p.name+' 使用「'+CFG.syn.kick.name+'」，讓 '+S.players[ti].name+' 強制 PASS 這次競標','syn');
+    const ti=Number(v); if(!Number.isInteger(ti)||!kickTargets(S,pi).includes(ti)||kickLeftN(S,pi)<=0)return '無效的選擇。';
+    S.kickCharges['p'+pi]=kickLeftN(S,pi)-1; S.kicked.push(ti);
+    log(S,p.name+' 使用「'+CFG.syn.kick.name+'」，讓 '+S.players[ti].name+' 強制 PASS 這次競標（剩 '+kickLeftN(S,pi)+' 次）','syn');
   }
-  S.kickAsk=null;
-  return beginAuction(S);
+  return kickAskNext(S,toArr(S.kickAsk.rest));
 }
 function beginAuction(S){
   const d=S.players[S.drawer], n=S.players.length;
-  if(S.kicked!==null&&!S.passed.includes(S.kicked))S.passed.push(S.kicked);
-  if(S.kicked===S.drawer){
+  for(const k of S.kicked)if(!S.passed.includes(k))S.passed.push(k);
+  if(S.kicked.includes(S.drawer)){
     /* 抽卡者被強制 PASS：改由下一位未被 PASS、資金足夠的玩家以起標價起標 */
     for(let i=1;i<n;i++){
       const idx=(S.drawer+i)%n, q=S.players[idx];
@@ -1151,6 +1175,7 @@ function checkSyn(S,pi){
     if(S.synOwner[s.id]!==undefined)continue;
     if(s.cards.every(c=>p.cards.includes(c))){S.synOwner[s.id]=pi;S.queue.push({id:s.id,p:pi});log(S,p.name+' 湊齊羈絆「'+s.name+'」','synfx',{sid:s.id,p:p.name,cards:s.cards.slice()})}
   }
+  checkKick(S);
   checkGe(S);
   checkBr(S);
 }
@@ -1223,7 +1248,7 @@ function applyEffect(S,it){
       log(S,s.name+'結果 '+(k+1)+'：'+t,'syn');
       return ev('抽到效果 '+(k+1)+'：'+t);
     }
-    case 'kick':return ev(p.name+' 獲得「'+s.name+'」：本局可用一次。之後每張卡翻開時會詢問是否使用，被指定的玩家這次競標會強制 PASS。');
+    case 'kick':return ev(p.name+' 集齊「'+s.name+'」，目前可用 '+kickLeftN(S,it.p)+' 次。之後每張卡翻開時會詢問是否使用，被指定的玩家這次競標會強制 PASS。');
     case 'sisters':{
       if(S.pool.length){
         const opts=[]; for(let i=0;i<3&&S.pool.length;i++){const c=drawFromPool(S);if(c)opts.push(c)}
@@ -1274,7 +1299,7 @@ function gChoose(S,v){
   processQueue(S); return null;
 }
 function nextTurn(S){
-  S.pendingNext=false; S.high=null; S.bid=0; S.passed=[]; S.actor=null; S.kicked=null; S.kickAsk=null;
+  S.pendingNext=false; S.high=null; S.bid=0; S.passed=[]; S.actor=null; S.kicked=[]; S.kickAsk=null;
   if(!S.pool.length){S.phase='end';S.card=null;log(S,'卡池已空，遊戲結束','sys')}
   else{S.drawer=(S.drawer+1)%S.players.length;S.phase='draw'}
 }
@@ -1406,6 +1431,7 @@ function onRoomUpdate(){
           if(l.k==='tier')setTimeout(()=>play('syn'),UI.reveal?2800:300);
           if(l.k==='egg')startEgg(l.p,l.n,l.m);
           if(l.k==='synfx'){const sy=CFG.syn[l.sid];if(sy)startSetFx({head:'羈絆湊齊！',name:sy.name,who:l.p,verb:'湊齊',cards:l.cards,reward:synDesc(l.sid,sy),long:true,note:l.p+' 湊齊羈絆「'+sy.name+'」（特效略過）'})}
+          if(l.k==='kickfx'){const kk=CFG.syn.kick;startSetFx({head:kk.name+' +'+l.u+' 次',name:kk.name,who:l.p,verb:'持有',cards:l.cards,reward:'目前共 '+l.tot+' 次'})}
           if(l.k==='brtier'){const bb=CFG.br.list[l.b];if(bb)startSetFx({head:l.grand?'支線集齊！':'支線獎勵！',name:bb.name,who:l.p,verb:'持有',cards:l.cards,reward:l.txt,grand:l.grand})}
           if(l.k==='win'&&botDriver())botChatOnWin(S,l);
         }
@@ -1977,7 +2003,7 @@ function pbarHTML(S){
     if(i===me)cls.push('me'); if(i===S.actor||(['draw','peek','deal'].includes(S.phase)&&i===S.drawer)||(S.phase==='choose'&&S.pending&&i===S.pending.pi)||(S.phase==='kickask'&&S.kickAsk&&i===S.kickAsk.pi))cls.push('active'); if(inAuc&&S.passed.includes(i))cls.push('passed');
     let flag='';
     if(!isOnline(p.uid))flag='<span class="flag off">離線</span>';
-    else if(inAuc&&i===S.kicked)flag='<span class="flag off">中離</span>';
+    else if(inAuc&&S.kicked.includes(i))flag='<span class="flag off">中離</span>';
     else if(inAuc&&i===S.high)flag='<span class="flag hi">領先</span>';
     else if(inAuc&&S.passed.includes(i))flag='<span class="flag">PASS</span>';
     else if(i===S.drawer)flag='<span class="flag">抽卡者</span>';
@@ -2066,7 +2092,7 @@ function renderFeed(){
   if(st.phase&&st.phase!=='lobby')for(const n of (UI.notes||[]))items.push({ts:n.ts,n});
   items.sort((a,b)=>a.ts-b.ts);
   const view=items.slice(-150);
-  const ico={bid:'💰 ',win:'🔨 ',syn:'✨ ',draw:'🃏 ',pass:'🙅 ',tier:'🏅 ',br:'🧭 ',brdone:'🧭 ',brtier:'🧭 '};
+  const ico={bid:'💰 ',win:'🔨 ',syn:'✨ ',draw:'🃏 ',pass:'🙅 ',tier:'🏅 ',br:'🧭 ',brdone:'🧭 ',brtier:'🧭 ',kickfx:'✨ '};
   feed.innerHTML=view.length?view.map(it=>{
     if(it.n)return '<li class="ev fxnote"><span class="pill">✨ '+esc(it.n.text)+'</span></li>';
     if(it.m){const m=it.m,mine=m.uid===uid,pi=pidx(m.uid);return '<li class="msg'+(mine?' mine':'')+(pi>=0?' av'+(pi%6):'')+'">'+(mine?'':'<span class="who">'+(pi>=0?'<i class="ava">'+esc([...m.name][0]||'?')+'</i>':'')+'<b>'+esc(m.name)+'</b></span>')+'<span class="bub">'+esc(m.text)+'</span></li>'}
@@ -2154,7 +2180,7 @@ function infoHTML(S){
     const cards=s.cards.map(c=>{const inP=PV.includes(c),oi=S.players.findIndex(q=>q.cards.includes(c));
       const lb=inP?'還在卡池':oi>=0?esc(S.players[oi].name)+(oi===myIdx(S)?'（你）':'')+' 持有':'已移除';
       return '<div class="gc'+(inP?'':' out')+'">'+cardFace(c,'sm'+(inP?'':' gone'))+'<span class="gl">'+lb+'</span></div>'}).join('');
-    return '<div class="gi"><div class="gh"><span class="n">'+esc(s.name)+'</span>'+(o!==undefined?'<span class="o">'+esc(S.players[o].name)+(w?' 已集齊，待觸發':s.id==='kick'?(S.kickUsed?' 已使用':' 持有，尚未使用'):' 已發動')+'</span>':'')+'</div><div class="d">'+esc(s.desc)+'</div><div class="gcards">'+cards+'</div></div>'}).join('')||'<p class="muted">沒有啟用的羈絆。</p>';
+    return '<div class="gi"><div class="gh"><span class="n">'+esc(s.name)+'</span>'+(o!==undefined?'<span class="o">'+esc(S.players[o].name)+(w?' 已集齊，待觸發':s.id==='kick'?' 已集齊':' 已發動')+'</span>':'')+'</div><div class="d">'+esc(s.desc)+'</div>'+(s.id==='kick'&&S.players.some((q,qi)=>kickLeftN(S,qi)>0)?'<div class="tsrow">'+S.players.map((q,qi)=>kickLeftN(S,qi)>0?'<span class="tsp on">'+esc(q.name)+(qi===myIdx(S)?'（你）':'')+' 剩 '+kickLeftN(S,qi)+' 次</span>':'').join('')+'</div>':'')+'<div class="gcards">'+cards+'</div></div>'}).join('')||'<p class="muted">沒有啟用的羈絆。</p>';
   else if(tab==='br')b=brList().map(br=>{
     const own=S.players.findIndex(q=>brDone(q,br)), cnt=S.players.map((q,qi)=>({q,qi,k:brCount(q,br)})).filter(x=>x.k>0);
     const cards=br.cards.map(c=>{const inP=PV.includes(c),oi=S.players.findIndex(q=>q.cards.includes(c));
@@ -2172,7 +2198,7 @@ function playerHTML(S,i){
   const p=S.players[i]; if(!p)return '';
   const sc=scoreOf(p);
   const cards=p.cards.slice().sort((a,b)=>(TORDER[tierOf(a).k]??9)-(TORDER[tierOf(b).k]??9));
-  const syns=SYN.filter(s=>S.synOwner[s.id]===i).map(s=>'<span class="synb">'+esc(s.name)+(S.armed[s.id]===i?'（待觸發）':'')+(s.id==='kick'?(S.kickUsed?'（已使用）':'（未使用）'):'')+'</span>').join('')+brActive(p).map(b=>'<span class="synb brb">🧭 '+esc(b.name)+'</span>').join('');
+  const syns=SYN.filter(s=>S.synOwner[s.id]===i).map(s=>'<span class="synb">'+esc(s.name)+(S.armed[s.id]===i?'（待觸發）':'')+''+'</span>').join('')+brActive(p).map(b=>'<span class="synb brb">🧭 '+esc(b.name)+'</span>').join('')+(kickLeftN(S,i)>0?'<span class="synb">'+esc(CFG.syn.kick.name)+' 剩 '+kickLeftN(S,i)+' 次</span>':'');
   return sheet(p.name+(p.uid===uid?'（你）':''),'<div class="sh-b"><div class="psum"><div>資金<b>'+fmt(p.money)+'</b></div><div>總分<b>'+sc.total+'</b></div><div>卡片／'+esc(CFG.syn.ge.name)+'／效果<b>'+sc.base+'／'+sc.ge+'／'+sc.adj+'</b></div>'+(RATE?'<div>資金換算<b>'+sc.money+'</b></div>':'')+(sc.tier?'<div>等級羈絆<b>'+sc.tier+'</b></div>':'')+(sc.br?'<div>支線<b>'+sc.br+'</b></div>':'')+'</div>'+
     tierInfo(p).list.map(t=>'<div class="tline"><b>'+esc(t.name)+'</b> '+t.n+' 張'+(t.lv>=0?'，第 '+(t.lv+1)+' 階 +'+t.bonus:'')+(t.next?'（再 '+(t.next-t.n)+' 張升階）':'（已滿階）')+'</div>').join('')+
     (syns?'<div style="margin-bottom:10px">'+syns+'</div>':'')+(p.rebate?'<p class="muted" style="font-size:13px">下次得標返還 '+CFG.syn.gamble.rebate+'%</p>':'')+
@@ -2225,9 +2251,9 @@ function renderOv(S){
 }
 function kickModalHTML(S){
   const k=CFG.syn.kick, me=myIdx(S);
-  return '<div class="ovl"><div class="modal synm kickm" role="dialog" aria-label="'+esc(k.name)+'"><div class="k">'+esc(k.name)+'・本局限用一次</div><div class="t">要使用嗎？</div>'+
+  return '<div class="ovl"><div class="modal synm kickm" role="dialog" aria-label="'+esc(k.name)+'"><div class="k">'+esc(k.name)+'・你還有 '+kickLeftN(S,me)+' 次</div><div class="t">要使用嗎？</div>'+
     '<div class="mid">'+cardFace(S.card,'sm')+'</div><p>指定一名玩家，這次競標強制 PASS。剩 <b class="num kicksec"></b> 秒，時間到視為不使用。</p><div class="opts">'+
-    S.players.map((q,i)=>i===me?'':'<button class="btn big" data-act="kick" data-v="'+i+'">讓 '+esc(q.name)+' 強制 PASS</button>').join('')+
+    kickTargets(S,me).map(i=>'<button class="btn big" data-act="kick" data-v="'+i+'">讓 '+esc(S.players[i].name)+' 強制 PASS</button>').join('')+
     '<button class="btn" data-act="kick" data-v="no">不使用</button></div></div></div>';
 }
 /* 倒數只更新數字，不重畫視窗，避免按鈕被替換而點不到 */
