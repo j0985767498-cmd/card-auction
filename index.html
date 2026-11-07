@@ -649,7 +649,8 @@ const DEFAULT_CFG={
     pay:{on:true,name:'全支付',cards:['欣魚','瑞恩'],amount:10000},
     pigs:{on:true,name:'黑龍雙豬',cards:['黑黑','狗庭妮'],score:100},
     hui:{on:true,name:'很惠嘻',cards:['嘻嘻','小惠'],threshold:50000},
-    gamble:{on:true,name:'博弈',cards:['賴玉琳','龍哥'],money:12000,score:80,rebate:50},
+    // 博弈：五種效果依權重隨機抽一種（權重合計不必是 100，會按比例換算）
+    gamble:{on:true,name:'博弈',cards:['賴玉琳','龍哥'],m1:20000,w1:30,s1:40,w2:30,m2:30000,w3:5,s2:60,w4:5,rebate:50,w5:30},
     sisters:{on:true,name:'姐妹丼',cards:['佩佩','佩佩的姊姊']},
     // 三張卡的羈絆：本局可用一次，卡片翻開時指定一名其他玩家強制 PASS 該次競標。sec＝詢問倒數秒數；egg＝是否計入億萬富翁
     kick:{on:true,name:'強制中離',cards:['小魚','花花','149'],sec:8,egg:true}
@@ -692,7 +693,7 @@ const SYN_PARAMS={
   pay:[['amount','轉移金額']],
   pigs:[['score','兩張卡合計變為幾分']],
   hui:[['threshold','資金低於多少才觸發']],
-  gamble:[['money','效果 1、2 的金額'],['score','效果 3、4 的分數'],['rebate','效果 5 返還 %']],
+  gamble:[['m1','效果 1：加多少元'],['w1','效果 1 機率 %'],['s1','效果 2：加多少分'],['w2','效果 2 機率 %'],['m2','效果 3：加多少元'],['w3','效果 3 機率 %'],['s2','效果 4：加多少分'],['w4','效果 4 機率 %'],['rebate','效果 5：返還 %'],['w5','效果 5 機率 %']],
   sisters:[],
   kick:[['sec','詢問倒數秒數']]
 };
@@ -895,11 +896,15 @@ function synDesc(id,s){
     case 'pay':return '指定一名玩家，將其 '+fmt(s.amount)+' 元轉給自己';
     case 'pigs':return '這兩張卡合計從 -100 分變為 +'+s.score+' 分（負負得正）';
     case 'hui':return '資金低於 '+fmt(s.threshold)+' 元時，與資金最高者合計後平分；集齊時未達條件會保留到達成為止';
-    case 'gamble':return '隨機一種：他人 -'+fmt(s.money)+' 元／自己 +'+fmt(s.money)+' 元／他人 -'+s.score+' 分／自己 +'+s.score+' 分／下次得標返還 '+s.rebate+'%';
+    case 'gamble':{const W=gambleOpts(s),tot=W.reduce((a,o)=>a+o.w,0)||1;return '隨機一種：'+W.map(o=>o.t+'（'+Math.round(o.w/tot*1000)/10+'%）').join('／')}
     case 'sisters':return '翻開卡池三張，挑一張帶走；卡池空了就改成從其他玩家手上搶一張';
     case 'kick':return '本局可用一次：卡片翻開時，指定一名其他玩家這次競標強制 PASS（詢問倒數 '+s.sec+' 秒）'+(s.egg?'；計入億萬富翁':'');
   }
   return '';
+}
+/* 博弈的五種效果與權重 */
+function gambleOpts(s){
+  return [{w:s.w1,t:'自己 +'+fmt(s.m1)+' 元'},{w:s.w2,t:'自己 +'+s.s1+' 分'},{w:s.w3,t:'自己 +'+fmt(s.m2)+' 元'},{w:s.w4,t:'自己 +'+s.s2+' 分'},{w:s.w5,t:'下次得標返還 '+s.rebate+'%'}].map(o=>({...o,w:Math.max(0,o.w)}));
 }
 function validateCfg(c){
   const e=[], all=c.tiers.flatMap(t=>t.cards);
@@ -916,6 +921,7 @@ function validateCfg(c){
     else if(new Set(s.cards).size<s.cards.length)e.push('羈絆「'+s.name+'」的卡片不能重複。');
     else for(const x of s.cards)if(!all.includes(x))e.push('羈絆「'+s.name+'」的「'+x+'」不在卡池裡。');
   }
+  if(c.syn.gamble.on){const g=c.syn.gamble;if([g.w1,g.w2,g.w3,g.w4,g.w5].some(w=>w<0))e.push('「'+g.name+'」的機率不能是負數。');else if(g.w1+g.w2+g.w3+g.w4+g.w5<=0)e.push('「'+g.name+'」的機率合計要大於 0。');if(g.rebate<0||g.rebate>100)e.push('「'+g.name+'」的返還 % 要在 0～100 之間。')}
   if(c.syn.kick.on&&(c.syn.kick.sec<3||c.syn.kick.sec>60))e.push('「'+c.syn.kick.name+'」的詢問倒數要在 3～60 秒之間。');
   if(c.money.mode!=='off'&&totalPts(c)<=0)e.push('卡片總分不是正數，無法換算剩餘資金。');
   if(c.money.mode==='fixed'&&c.money.rate<=0)e.push('固定換算價需大於 0。');
@@ -1188,14 +1194,16 @@ function applyEffect(S,it){
       return ev(p.name+' 與資金最高的 '+q.name+' 合計 '+fmt(tot)+' 元後平分，各得約 '+fmt(p.money)+' 元。');
     }
     case 'gamble':{
-      const roll=rnd(5)+1, o=others(S,it.p), tgt=P[o[rnd(o.length)]]; let t;
-      if(roll===1){const d=Math.min(s.money,tgt.money);tgt.money-=d;t='隨機玩家 '+tgt.name+' 扣 '+fmt(d)+' 元。'}
-      else if(roll===2){p.money+=s.money;t=p.name+' 獲得 '+fmt(s.money)+' 元。'}
-      else if(roll===3){tgt.scoreAdj-=s.score;t='隨機玩家 '+tgt.name+' 扣 '+s.score+' 分。'}
-      else if(roll===4){p.scoreAdj+=s.score;t=p.name+' 獲得 '+s.score+' 分。'}
+      const W=gambleOpts(s), tot=W.reduce((a,o)=>a+o.w,0); let r=Math.random()*tot, k=W.length-1;
+      for(let i=0;i<W.length;i++){if(r<W[i].w){k=i;break}r-=W[i].w}
+      let t;
+      if(k===0){p.money+=s.m1;t=p.name+' 獲得 '+fmt(s.m1)+' 元。'}
+      else if(k===1){p.scoreAdj+=s.s1;t=p.name+' 獲得 '+s.s1+' 分。'}
+      else if(k===2){p.money+=s.m2;t=p.name+' 獲得 '+fmt(s.m2)+' 元。'}
+      else if(k===3){p.scoreAdj+=s.s2;t=p.name+' 獲得 '+s.s2+' 分。'}
       else{p.rebate=true;t=p.name+' 下一次得標的卡片可返還 '+s.rebate+'% 金額。'}
-      log(S,s.name+'結果 '+roll+'：'+t,'syn');
-      return ev('抽到效果 '+roll+'：'+t);
+      log(S,s.name+'結果 '+(k+1)+'：'+t,'syn');
+      return ev('抽到效果 '+(k+1)+'：'+t);
     }
     case 'kick':return ev(p.name+' 獲得「'+s.name+'」：本局可用一次。之後每張卡翻開時會詢問是否使用，被指定的玩家這次競標會強制 PASS。');
     case 'sisters':{
