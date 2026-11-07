@@ -551,6 +551,32 @@ body{background:radial-gradient(120% 60% at 15% -10%,color-mix(in srgb,var(--acc
 /* 聊天室裡的億萬富翁紀錄 */
 .ev.egg .pill{background:linear-gradient(100deg,#F7D36A,#E2A92B);color:#3d2a00;border-color:transparent;font-weight:900}
 @media (prefers-reduced-motion:reduce){.hfan .hc,.hfan .hc.tSS::before{animation:none!important}}
+/* ================= 支線 ================= */
+.card .sbadge.second{top:19px}
+.card .brbadge{border-style:dashed}
+.card .syn.brsyn{background:rgba(11,110,153,.55)}
+.gcards.wrap{flex-wrap:wrap}
+.synb.brb{border-color:#0B6E99;color:#0B6E99}
+.brwarn{color:#9a5c00;font-size:13px;margin:8px 0;padding-left:18px}
+.ev.brdone .pill{background:#0B6E99;color:#fff;border-color:transparent;font-weight:700}
+.ev.br .pill{border-color:#0B6E99;color:#0B6E99;font-weight:700}
+.rgrid .brw{border-color:color-mix(in srgb,#0B6E99 40%,var(--line));background:color-mix(in srgb,#0B6E99 7%,var(--surface))}
+.brfx{position:fixed;inset:0;z-index:36;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;overflow:hidden;cursor:pointer;
+  padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(12px + env(safe-area-inset-bottom,0px));
+  background:radial-gradient(circle at 50% 45%,#0f4f6e,#06121f 72%);animation:fadein .3s both}
+.brfx .rays{position:absolute;width:170vmax;height:170vmax;left:50%;top:45%;margin:-85vmax 0 0 -85vmax;background:repeating-conic-gradient(from 0deg,rgba(120,220,255,.16) 0 7deg,transparent 7deg 18deg);animation:spin 14s linear infinite;pointer-events:none}
+.brfx>*:not(.rays){position:relative;z-index:1}
+.brfx .bk{color:#FFE08A;font-weight:900;font-size:clamp(30px,9vw,46px);letter-spacing:.06em;line-height:1.1;text-shadow:0 3px 0 rgba(0,0,0,.35),0 0 18px rgba(255,210,90,.55);animation:pop .5s .15s cubic-bezier(.2,1.6,.4,1) both}
+.brfx .bn{color:#fff;font-weight:900;font-size:18px;animation:fadein .4s .3s both}
+.brfx .bgrid{--gap:8px;--cw:min(calc((min(92vw,420px) - (var(--cols) - 1) * var(--gap)) / var(--cols)),calc((46vh - (var(--rows) - 1) * var(--gap)) / var(--rows) * 0.714));
+  display:grid;grid-template-columns:repeat(var(--cols),var(--cw));gap:var(--gap);justify-content:center;margin:8px 0 4px}
+.brfx .bc{animation:reveal .6s calc(.35s + var(--i) * .1s) cubic-bezier(.2,1.35,.35,1) both}
+.brfx .bc .card.sm{width:var(--cw);height:calc(var(--cw) * 1.4);border-radius:12px;box-shadow:0 0 0 2px rgba(255,255,255,.55),0 0 22px 2px rgba(120,220,255,.45)}
+.brfx .bc .card.sm .nm{font-size:clamp(12px,3.6vw,16px)}
+.brfx .bw{color:#fff;font-weight:700;font-size:16px;animation:fadein .4s .9s both}
+.brfx .bp{color:#7CFFB2;font-weight:700;font-size:clamp(30px,9vw,44px);text-shadow:0 0 16px rgba(124,255,178,.6);animation:pop .5s 1s cubic-bezier(.2,1.6,.4,1) both}
+.brfx .sub{color:rgba(255,255,255,.7);font-size:13px;animation:fadein .4s 1s both}
+@media (prefers-reduced-motion:reduce){.brfx .rays{display:none}}
 </style>
 </head>
 <body>
@@ -612,6 +638,12 @@ const DEFAULT_CFG={
   ],
   // 抽卡三選一：dealUp=true 時三張牌面朝上（所有人都看得到）
   deal:{on:true,up:false},
+  // 支線：同一位玩家集齊某條支線的全部角色即達成。pts＝達成加分；extra＝同一人第二條以上支線的加分；egg＝是否計入億萬富翁的羈絆數
+  br:{on:true,pts:500,extra:0,egg:false,list:[
+    {on:true,name:'支線一',cards:['小七','何柔','林文','小希','張真遇','軍官妹妹']},
+    {on:true,name:'支線二',cards:['小七','台中姊姊','小魚','花花','una','君君']},
+    {on:true,name:'支線三',cards:['小七','艾琳娜','喵喵','欣蘋','翁寒','汪']}
+  ]},
   // 得標時的彩蛋台詞：一行一個，格式「角色名稱：台詞」
   linesText:'小七：我是男的喔 阿哲最愛你了啾咪'
 };
@@ -703,8 +735,9 @@ function botValue(S,bi,c){
     if(!s.cards.includes(c))continue;
     const other=s.cards.find(x=>x!==c), owner=S.players.findIndex(q=>q.cards.includes(other)), w=synWorth(s,S,bi);
     if(owner===bi)pts+=w; else if(owner>=0)pts+=w*0.4; else if(S.pool.includes(other))pts+=w*0.25;
-    if(owner===bi&&CFG.egg.on&&S.eggOwner===null&&Object.values(S.synOwner).filter(v=>v===bi).length===CFG.egg.need-1)pts+=500;
+    if(owner===bi&&CFG.egg.on&&S.eggOwner===null&&eggCount(S,bi)===CFG.egg.need-1)pts+=500;
   }
+  pts+=brValue(S,bi,c);
   {const before=tierInfo(p).total; p.cards.push(c); const after=tierInfo(p).total; p.cards.pop(); pts+=after-before;}
   if(pts<=0)return 0;
   const money=S.players.reduce((a,q)=>a+q.money,0);
@@ -712,6 +745,26 @@ function botValue(S,bi,c){
   let rate=money/rem; if(RATE)rate=Math.min(rate,RATE*0.95);
   const agg=(BOTS.find(x=>x.name===p.name)||{agg:1}).agg;
   return Math.floor(pts*rate*agg*(0.8+Math.random()*0.4));
+}
+/* 支線價值：自己接近達成時提高出價；對手接近達成時出價阻擋 */
+function brValue(S,bi,c){
+  let v=0; const me=S.players[bi];
+  for(const b of brsOf(c)){
+    if(S.players.some(q=>brDone(q,b)))continue;
+    const rest=b.cards.filter(x=>x!==c), holder=x=>S.players.findIndex(q=>q.cards.includes(x));
+    const mine=rest.filter(x=>holder(x)===bi).length, opp=rest.filter(x=>{const h=holder(x);return h>=0&&h!==bi}).length;
+    const myGain=brActive(me).length?CFG.br.extra:CFG.br.pts;
+    if(mine===rest.length){v+=myGain;if(CFG.br.egg&&CFG.egg.on&&S.eggOwner===null&&eggCount(S,bi)===CFG.egg.need-1)v+=500}
+    else if(opp===0&&mine>0)v+=myGain*Math.pow(mine/rest.length,2)*0.45;
+    S.players.forEach((q,qi)=>{
+      if(qi===bi)return;
+      const qm=rest.filter(x=>holder(x)===qi).length, qGain=brActive(q).length?CFG.br.extra:CFG.br.pts, blocked=rest.some(x=>{const h=holder(x);return h>=0&&h!==qi});
+      if(blocked)return;
+      if(qm===rest.length)v+=qGain*0.85;
+      else if(qm>=rest.length-1&&qm>0)v+=qGain*0.3;
+    });
+  }
+  return v;
 }
 function botAct(){
   if(!room||!botDriver())return;
@@ -764,6 +817,9 @@ function normCfg(c){
   const cd=c.deal||{}; o.deal={on:cd.on===undefined?D.deal.on:!!cd.on,up:cd.up===undefined?D.deal.up:!!cd.up};
   o.money={mode:['auto','fixed','off'].includes(cm.mode)?cm.mode:D.money.mode,rate:numOr(cm.rate,D.money.rate)};
   o.egg={on:ce.on===undefined?D.egg.on:!!ce.on,name:String(ce.name||D.egg.name),need:Math.round(numOr(ce.need,D.egg.need)),money:numOr(ce.money,D.egg.money)};
+  const cb=c.br||{}, cl=toArr(cb.list);
+  o.br={on:cb.on===undefined?D.br.on:!!cb.on,pts:numOr(cb.pts,D.br.pts),extra:numOr(cb.extra,D.br.extra),egg:cb.egg===undefined?D.br.egg:!!cb.egg,
+    list:D.br.list.map((d,i)=>{const b=cl[i]||{};return {on:b.on===undefined?d.on:!!b.on,name:String(b.name||d.name),cards:b.cards===undefined?d.cards.slice():toArr(b.cards).map(x=>String(x).trim()).filter(Boolean)}})};
   return o;
 }
 const totalPts=c=>c.tiers.reduce((a,t)=>a+t.score*t.cards.length,0);
@@ -808,7 +864,31 @@ function validateCfg(c){
   if(c.money.mode!=='off'&&totalPts(c)<=0)e.push('卡片總分不是正數，無法換算剩餘資金。');
   if(c.money.mode==='fixed'&&c.money.rate<=0)e.push('固定換算價需大於 0。');
   if(c.egg.on&&(c.egg.need<1||c.egg.need>7))e.push('彩蛋需要的羈絆數要在 1～7 之間。');
+  e.push(...brErrors(c));
   return e;
+}
+/* ---------- 支線：設定檢查 ---------- */
+function brErrors(c){
+  const e=[], all=c.tiers.flatMap(t=>t.cards); if(!c.br||!c.br.on)return e;
+  c.br.list.forEach(b=>{
+    if(!b.on)return;
+    if(b.cards.length<2)e.push('支線「'+b.name+'」至少要有 2 張卡。');
+    const dup=[...new Set(b.cards.filter((x,i)=>b.cards.indexOf(x)!==i))];
+    if(dup.length)e.push('支線「'+b.name+'」的角色重複：'+dup.join('、')+'。');
+    const miss=b.cards.filter(x=>!all.includes(x));
+    if(miss.length)e.push('支線「'+b.name+'」的「'+miss.join('、')+'」不在卡池裡。');
+  });
+  return e;
+}
+function brWarnings(c){
+  const w=[]; if(!c.br||!c.br.on)return w;
+  const on=c.br.list.filter(b=>b.on), cnt={};
+  on.forEach(b=>[...new Set(b.cards)].forEach(x=>cnt[x]=(cnt[x]||0)+1));
+  const multi=Object.keys(cnt).filter(x=>cnt[x]>1);
+  if(multi.length)w.push('同時屬於多條支線：'+multi.join('、')+'（可儲存，但同一張卡會影響多條支線）。');
+  const pairs=SYN_ORDER.filter(id=>c.syn[id].on).flatMap(id=>c.syn[id].cards.filter(x=>cnt[x]).map(x=>x+'（'+c.syn[id].name+'）'));
+  if(pairs.length)w.push('同時屬於配對羈絆：'+pairs.join('、')+'（可儲存）。');
+  return w;
 }
 const tierOf=c=>TIERS.find(t=>t.cards.includes(c))||{k:'E',label:'?',score:0};
 function lineOf(c){
@@ -818,6 +898,35 @@ function lineOf(c){
   return '';
 }
 const synOf=c=>SYN.find(s=>s.cards.includes(c));
+/* ---------- 支線：計算 ---------- */
+const BR_COLOR='#0B6E99';
+const brList=()=>CFG.br&&CFG.br.on?CFG.br.list.map((b,i)=>({...b,i})).filter(b=>b.on&&b.cards.length>=2):[];
+const brsOf=c=>brList().filter(b=>b.cards.includes(c));
+const brDone=(p,b)=>b.cards.every(c=>p.cards.includes(c));
+const brActive=p=>brList().filter(b=>brDone(p,b));
+const brBonusN=k=>k>0?CFG.br.pts+(k-1)*CFG.br.extra:0;
+const brBonus=p=>brBonusN(brActive(p).length);
+const eggCount=(S,i)=>Object.values(S.synOwner).filter(v=>v===i).length+(CFG.br&&CFG.br.on&&CFG.br.egg&&S.players[i]?brActive(S.players[i]).length:0);
+/* 檢查每條支線目前由誰達成；與房間狀態中的紀錄比對，產生達成／失效／恢復事件。brShown 記錄每局每條支線是否已播過特效 */
+function checkBr(S){
+  const L=brList(), ch=[];
+  for(const b of L){const key='b'+b.i, prev=S.brOwner[key]??-1, now=S.players.findIndex(p=>brDone(p,b)); if(now!==prev)ch.push({b,key,prev,now})}
+  if(!ch.length)return;
+  /* 依「先扣後加」逐條計算加減分，與 brBonusN（第一條 pts、之後每條 extra）一致 */
+  const cnt={}; S.players.forEach((p,i)=>cnt[i]=L.filter(b=>(S.brOwner['b'+b.i]??-1)===i).length);
+  for(const c of ch)if(c.prev>=0&&S.players[c.prev]){
+    const q=S.players[c.prev]; cnt[c.prev]--;
+    log(S,'支線「'+c.b.name+'」失效：'+q.name+' 不再持有全部角色，扣回 '+(cnt[c.prev]>0?CFG.br.extra:CFG.br.pts)+' 分','br',{b:c.b.i,p:q.name});
+  }
+  for(const c of ch){
+    if(c.now>=0){
+      const p=S.players[c.now]; cnt[c.now]++; const gain=cnt[c.now]>1?CFG.br.extra:CFG.br.pts;
+      if(!S.brShown[c.key]){S.brShown[c.key]=true;log(S,p.name+' 達成支線「'+c.b.name+'」！+'+gain+' 分','brdone',{b:c.b.i,p:p.name,pts:gain})}
+      else log(S,'支線「'+c.b.name+'」恢復：'+p.name+' 再度集齊，+'+gain+' 分','br',{b:c.b.i,p:p.name});
+    }
+    S.brOwner[c.key]=c.now;
+  }
+}
 let ART={};
 const artKey=n=>encodeURIComponent(n).replace(/\./g,'%2E');
 
@@ -827,7 +936,7 @@ function norm(S){
   S.pool=toArr(S.pool); S.passed=toArr(S.passed); S.log=toArr(S.log); S.synOwner=S.synOwner||{};
   S.queue=toArr(S.queue); S.armed=S.armed||{}; S.events=toArr(S.events); S.evSeq=S.evSeq||0; S.drawn=S.drawn||0;
   for(const k of ['high','actor','last','card','pending','eggOwner','deal'])if(S[k]===undefined)S[k]=null;
-  if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{};
+  if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{}; S.brOwner=S.brOwner||{}; S.brShown=S.brShown||{};
   S.rate=S.rate||0;
   if(S.pending)S.pending.opts=toArr(S.pending.opts);
   S.drawer=S.drawer||0; S.bid=S.bid||0; S.pendingNext=!!S.pendingNext;
@@ -925,6 +1034,7 @@ function checkSyn(S,pi){
     if(S.synOwner[s.id]!==undefined)continue;
     if(s.cards.every(c=>p.cards.includes(c))){S.synOwner[s.id]=pi;S.queue.push({id:s.id,p:pi})}
   }
+  checkBr(S);
 }
 function checkArmed(S){
   const pi=S.armed.hui; if(pi===undefined||pi===null)return;
@@ -947,7 +1057,7 @@ function processQueue(S){
 function checkEgg(S){
   const e=CFG.egg; if(!e.on||S.eggOwner!==null)return;
   for(let i=0;i<S.players.length;i++){
-    const n=Object.values(S.synOwner).filter(v=>v===i).length;
+    const n=eggCount(S,i);
     if(n>=e.need){
       const p=S.players[i]; S.eggOwner=i; p.money+=e.money;
       log(S,p.name+' 集滿 '+n+' 個羈絆，觸發「'+e.name+'」！獲得 '+fmt(e.money)+' 元','egg',{p:p.name,n,m:e.money});
@@ -1072,8 +1182,8 @@ function scoreOf(p){
   const pigs=pg.on&&pg.cards.every(has);
   let base=pigs?pg.score:0; for(const c of p.cards)if(!(pigs&&pg.cards.includes(c)))base+=tierOf(c).score;
   const ge=(gs.on&&gs.cards.every(has))?gs.per*p.cards.filter(c=>['C','D'].includes(tierOf(c).k)).length:0;
-  const money=RATE>0?Math.floor(Math.max(0,p.money)/RATE):0, tier=tierInfo(p).total;
-  return {base,ge,adj:p.scoreAdj,money,tier,total:base+ge+tier+p.scoreAdj+money};
+  const money=RATE>0?Math.floor(Math.max(0,p.money)/RATE):0, tier=tierInfo(p).total, br=brBonus(p);
+  return {base,ge,adj:p.scoreAdj,money,tier,br,total:base+ge+tier+p.scoreAdj+br+money};
 }
 
 /* ===================== 連線 ===================== */
@@ -1174,6 +1284,7 @@ function onRoomUpdate(){
           if(l.k==='pass')play('pass');
           if(l.k==='tier')setTimeout(()=>play('syn'),UI.reveal?2800:300);
           if(l.k==='egg')startEgg(l.p,l.n,l.m);
+          if(l.k==='brdone')startBranch(l.b,l.p,l.pts);
           if(l.k==='win'&&botDriver())botChatOnWin(S,l);
         }
       }
@@ -1281,6 +1392,7 @@ const SFX={
   tick(){tone(N(72+(UI.tickLv||0)*4),0,0.09,{type:'triangle',vol:0.09})},
   boing(){tone(N(60),0,0.5,{to:N(72),vol:0.1,vib:9});tone(N(79),0.45,0.12,{vol:0.08});tone(N(84),0.55,0.25,{vol:0.08})},
   egg(){[60,64,67,72,76,79,84,88].forEach((m,i)=>tone(N(m),i*0.09,0.6,{type:'triangle',vol:0.15}));[72,76,79,84].forEach(m=>tone(N(m),0.8,2.2,{type:'sawtooth',vol:0.035}));[84,88,91,96].forEach(m=>tone(N(m),0.8,2.2,{vol:0.06}));for(let i=0;i<14;i++)tone(N(96+rnd(8)),1.0+i*0.09,0.12,{type:'square',vol:0.03});noise(0.8,1.5,{f:7000,filter:'highpass',vol:0.05})},
+  branch(){[67,71,74,79,83,86].forEach((m,i)=>tone(N(m),i*0.08,0.5,{type:'triangle',vol:0.14}));[79,83,86,91].forEach(m=>tone(N(m),0.55,1.8,{vol:0.06}));[0.6,0.75,0.9,1.05].forEach((t,i)=>tone(N(98+i*2),t,0.25,{vol:0.04}));noise(0.5,1.0,{f:6500,filter:'highpass',vol:0.04})},
   end(){[67,72,76,79,84].forEach((m,i)=>tone(N(m),i*0.12,0.5,{type:'triangle',vol:0.13}));tone(N(88),0.62,1.4,{type:'triangle',vol:0.1})}
 };
 const play=k=>{try{SFX[k]&&SFX[k]()}catch(e){}};
@@ -1396,16 +1508,22 @@ function confetti(n){
 
 /* ---------- 特效 ---------- */
 function showOverlay(sp){UI.ovq=UI.ovq||[];UI.ovq.push(sp);if(!UI.reveal)nextOverlay()}
+function clearFx(){
+  /* 直接移除特效元素與遮罩層，確保不會殘留透明層擋住按鈕 */
+  const ov=document.getElementById('ov'); if(ov&&ov.querySelector('.brfx,.eggfx,.rv')){ov.innerHTML='';lastOv=''}
+}
 function nextOverlay(){
   clearTimeout(UI.ovTimer);
   const sp=(UI.ovq||[]).shift();
-  if(!sp){UI.reveal=null;musicDuck(false);render();return}
+  if(!sp){UI.reveal=null;musicDuck(false);clearFx();render();return}
   musicDuck(true);
-  sp.id=NOW()+Math.random(); UI.reveal=sp;
+  sp.id=NOW()+Math.random(); sp.at=Date.now(); UI.reveal=sp;
+  UI.ovTimer=setTimeout(()=>{if(UI.reveal===sp)nextOverlay()},reduced()?Math.max(sp.lock||0,Math.min(sp.dur,1800)):sp.dur);
   try{sp.onShow&&sp.onShow()}catch(e){}
-  UI.ovTimer=setTimeout(()=>{if(UI.reveal===sp)nextOverlay()},reduced()?Math.min(sp.dur,1800):sp.dur);
-  render();
+  try{render()}catch(e){console.error('特效顯示失敗',e);if(UI.reveal===sp){UI.reveal=null;clearFx();setTimeout(nextOverlay,0)}}
 }
+/* 特效出現後 lock 毫秒內不接受點擊關閉，避免誤觸 */
+const canCloseFx=()=>!UI.reveal||!UI.reveal.lock||Date.now()-UI.reveal.at>=UI.reveal.lock;
 function startWin(c,who,price){
   if(!c)return;
   const t=tierOf(c), g=GLOW[t.k]||'#fff', meWin=room&&room.players&&room.players[uid]&&room.players[uid].name===who;
@@ -1436,6 +1554,20 @@ function startEgg(who,n,m){
   showOverlay({dur:7500,onShow(){play('egg');vib([80,60,80,60,200]);setTimeout(()=>confetti(160),600)},html:'<div class="eggfx" data-act="reveal-close" role="dialog" aria-label="'+esc(CFG.egg.name)+'"><div class="rays"></div>'+bills+
     '<div class="crown">👑</div><div class="ttl">'+esc(CFG.egg.name)+'</div><div class="who">'+(meWin?'你':esc(who))+' 集滿 '+n+' 個羈絆！</div>'+
     '<div class="amt">+'+fmt(m||CFG.egg.money)+'</div><div class="sub">點一下繼續</div></div>'});
+}
+
+function startBranch(bi,who,pts){
+  try{
+    const br=CFG.br&&CFG.br.list[bi]; if(!br)return;
+    const n=br.cards.length, cols=n<=3?n:n===4?2:n<=9?3:4, rows=Math.ceil(n/cols);
+    const meWin=room&&room.players&&room.players[uid]&&room.players[uid].name===who;
+    const cards=br.cards.map((c,i)=>'<div class="bc" style="--i:'+i+'">'+cardFace(c,'sm')+'</div>').join('');
+    const html='<div class="brfx" data-act="reveal-close" role="dialog" aria-label="支線達成"><div class="rays"></div>'+
+      '<div class="bk">支線達成！</div><div class="bn">'+esc(br.name)+'</div>'+
+      '<div class="bgrid" style="--cols:'+cols+';--rows:'+rows+'">'+cards+'</div>'+
+      '<div class="bw">'+(meWin?'你':esc(who))+' 集齊 '+n+' 張</div><div class="bp num">+'+fmt(pts)+' 分</div><div class="sub">點一下繼續</div></div>';
+    showOverlay({dur:15000,lock:1000,html,onShow(){play('branch');vib(meWin?[60,40,60,40,140]:[40,30,40]);setTimeout(()=>confetti(meWin?140:80),500)}});
+  }catch(e){console.error('支線特效建立失敗',e)}
 }
 
 /* ---------- 美術圖 ---------- */
@@ -1492,6 +1624,7 @@ function rulesHTML(c,edit){
     '<h3>等級、機率、分數與角色</h3><div class="tr h"><div>等級</div><div>機率%</div><div>分數</div><div>角色（頓號或逗號分隔）</div></div>'+tiers+
     '<div class="sum muted">有角色的等級機率合計 <b class="num">'+Math.round(sum*10)/10+'%</b>'+(Math.abs(sum-100)>0.01?'，不是 100% 時會按比例換算':'')+'</div>'+
     '<h3>羈絆（取消勾選即停用）</h3>'+syns+
+    brRulesHTML(c,d)+
     '<h3>得標時的彩蛋台詞</h3><p class="muted" style="font-size:13px;margin:0 0 6px">一行一個，格式為「角色名稱：台詞」。有人標中（或免費獲得）該角色時，會跳出彩蛋特效，並以角色身分發到聊天室。抽出時不會觸發。</p>'+
     '<textarea id="cfg-lines" rows="4" placeholder="小七：我是男的喔"'+d+'>'+esc(String(c.linesText||'').trim())+'</textarea>'+
     '<h3>卡片美術圖</h3><p class="muted" style="font-size:13px;margin:0 0 10px">'+(edit?'選擇圖片後會自動裁切成直式卡片大小。圖片會存在你的 Firebase，所有房間共用。':'只有房主可以上傳。')+'</p>'+
@@ -1499,6 +1632,18 @@ function rulesHTML(c,edit){
     '<div class="artg">'+art+'</div>'+
     (errs.length?'<ul class="warnbox">'+errs.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+
     (edit?'<div style="margin-top:14px"><button class="btn" data-act="cfg-reset">恢復預設規則</button></div>':'')+'</div>';
+}
+function brRulesHTML(c,d){
+  const b=c.br, er=brErrors(c), wr=brWarnings(c);
+  return '<h3>支線</h3><div class="sy'+(b.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-br-on" '+(b.on?'checked':'')+' aria-label="啟用支線系統"'+d+'><span>啟用支線系統</span></div>'+
+    '<div class="sp"><div><label for="cfg-br-pts">達成加分</label><input class="num" type="number" id="cfg-br-pts" value="'+b.pts+'"'+d+'></div>'+
+    '<div><label for="cfg-br-extra">第二條起每條加分</label><input class="num" type="number" id="cfg-br-extra" value="'+b.extra+'"'+d+'></div></div>'+
+    '<div class="syh" style="margin-top:8px"><input type="checkbox" id="cfg-br-egg" '+(b.egg?'checked':'')+' aria-label="支線計入億萬富翁"'+d+'><span>達成的支線計入「'+esc(c.egg.name)+'」所需的羈絆數</span></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:6px">同一位玩家集齊一條支線的全部角色即達成；卡片被搶走時支線失效並扣回加分，再度集齊會恢復。達成特效每局每條支線只播放一次。</div></div>'+
+    b.list.map((x,i)=>'<div class="sy'+(b.on&&x.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-br'+i+'-on" '+(x.on?'checked':'')+' aria-label="啟用"'+d+'><input type="text" id="cfg-br'+i+'-name" value="'+esc(x.name)+'" aria-label="支線名稱"'+d+'><span class="muted" style="white-space:nowrap">'+x.cards.length+' 張</span></div>'+
+      '<div style="margin-top:8px"><label for="cfg-br'+i+'-cards" style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:2px">角色（頓號或逗號分隔，至少 2 張）</label><textarea id="cfg-br'+i+'-cards" rows="2"'+d+'>'+esc(x.cards.join('、'))+'</textarea></div></div>').join('')+
+    (er.length?'<ul class="warnbox">'+er.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+
+    (wr.length?'<ul class="brwarn">'+wr.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'');
 }
 function readCfgForm(){
   const v=id=>document.getElementById(id);
@@ -1516,6 +1661,8 @@ function readCfgForm(){
   c.deal={on:v('cfg-deal-on').checked,up:v('cfg-deal-up').checked};
   c.tsyn=c.tsyn.map((t,i)=>({on:v('cfg-ts'+i+'-on').checked,name:v('cfg-ts'+i+'-name').value.trim()||DEFAULT_CFG.tsyn[i].name,tier:t.tier,th:v('cfg-ts'+i+'-th').value,bonus:v('cfg-ts'+i+'-bo').value}));
   c.egg={on:v('cfg-egg-on').checked,name:v('cfg-egg-name').value.trim()||DEFAULT_CFG.egg.name,need:Math.round(numOr(v('cfg-egg-need').value,c.egg.need)),money:numOr(v('cfg-egg-money').value,c.egg.money)};
+  c.br={on:v('cfg-br-on').checked,pts:numOr(v('cfg-br-pts').value,c.br.pts),extra:numOr(v('cfg-br-extra').value,c.br.extra),egg:v('cfg-br-egg').checked,
+    list:c.br.list.map((b,i)=>({on:v('cfg-br'+i+'-on').checked,name:v('cfg-br'+i+'-name').value.trim()||DEFAULT_CFG.br.list[i].name,cards:v('cfg-br'+i+'-cards').value.split(/[、,，\n]+/).map(x=>x.trim()).filter(Boolean)}))};
   for(const id of SYN_ORDER){
     const s=c.syn[id];
     s.on=v('cfg-s-'+id+'-on').checked;
@@ -1540,8 +1687,14 @@ function cardFace(c,cls){
     const done=mc.includes(c)&&mc.includes(other); hot=!mc.includes(c)&&mc.includes(other);
     badge='<span class="sbadge" style="--sc:'+(SYN_COLOR[s.id]||'#555')+'">'+(done?'✓':hot?'★':'')+esc(s.name)+'</span>';
   }
+  const bs=brsOf(c);
+  if(bs.length&&sm){
+    const mc=UI.myCards||[], fin=bs.find(b=>b.cards.every(x=>mc.includes(x))), near=!mc.includes(c)&&bs.find(b=>b.cards.every(x=>x===c||mc.includes(x)));
+    if(near)hot=true;
+    badge+='<span class="sbadge brbadge'+(s?' second':'')+'" style="--sc:'+BR_COLOR+'">'+(fin?'✓':near?'★':'')+esc(bs[0].name)+(bs.length>1?'+'+(bs.length-1):'')+'</span>';
+  }
   return '<div class="card t'+t.k+(a?' has-art':'')+(hot?' hot':'')+' '+(cls||'')+'"'+(a?' style="--art:url(\''+a+'\')"':'')+'>'+badge+'<div class="tier">'+t.label+'</div>'+
-    '<div class="foot"><div class="nm">'+esc(c)+'</div>'+(s?'<div class="syn">'+esc(s.name)+'</div>':'')+'<div class="pts">'+(t.score>0?'+':'')+t.score+' 分</div></div></div>';
+    '<div class="foot"><div class="nm">'+esc(c)+'</div>'+(s?'<div class="syn">'+esc(s.name)+'</div>':'')+bs.map(b=>'<div class="syn brsyn">'+esc(b.name)+'</div>').join('')+'<div class="pts">'+(t.score>0?'+':'')+t.score+' 分</div></div></div>';
 }
 const myPhrases=()=>Array.isArray(local.phrases)&&local.phrases.length?local.phrases:PHRASES;
 function phrasesHTML(){return '<button class="btn pe" data-act="phrases-edit" aria-label="編輯快捷語句">✏️</button>'+myPhrases().map(p=>'<button class="btn" data-act="phrase" data-v="'+esc(p)+'">'+esc(p)+'</button>').join('')}
@@ -1624,6 +1777,7 @@ function ruleChips(n){
   const ms=moneySetup(CFG,n), cards=CFG.tiers.reduce((a,t)=>a+t.cards.length,0);
   const it=[['起始資金',fmt(ms.start)],['起標價',fmt(CFG.openBid)],['每次加價',fmt(CFG.step)],['資金換算',ms.rate?fmt(ms.rate)+' 元＝1 分':'不計分'],['卡池',cards+' 張'],['人數',n+' 人']];
   return '<dl class="rgrid">'+it.map(([k,v])=>'<div><dt>'+esc(k)+'</dt><dd class="num">'+esc(v)+'</dd></div>').join('')+
+    (brList().length?'<div class="wide brw"><dt>🧭 支線</dt><dd>'+brList().length+' 條，集齊 +'+CFG.br.pts+' 分</dd></div>':'')+
     (CFG.egg.on?'<div class="wide"><dt>👑 '+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd></div>':'')+'</dl>';
 }
 function lobbyInfoHTML(){
@@ -1713,7 +1867,7 @@ function endHTML(S){
   const tieNote=rows.filter(r=>r.s.total===top).length>wset.length?'<div class="muted" style="font-size:12px;margin:-4px 0 6px">同分時比剩餘資金</div>':'';
   return '<div class="win">🏆 '+esc(winners.join('、'))+' 獲勝</div>'+tieNote+
     rows.map((r,i)=>'<button class="rk'+(wset.includes(r)?' top':'')+'" style="width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer" data-act="pinfo" data-v="'+S.players.indexOf(r.p)+'"><span class="r">'+(i+1)+'</span>'+
-      '<span class="n">'+esc(r.p.name)+'<small>卡片 '+(r.s.base+r.s.ge+r.s.adj+r.s.tier)+' 分'+(RATE?'＋資金 '+r.s.money+' 分':'')+'，剩 $'+fmt(r.p.money)+'</small></span><span class="s">'+r.s.total+'</span></button>').join('');
+      '<span class="n">'+esc(r.p.name)+'<small>卡片 '+(r.s.base+r.s.ge+r.s.adj+r.s.tier)+' 分'+(r.s.br?'＋支線 '+r.s.br+' 分':'')+(RATE?'＋資金 '+r.s.money+' 分':'')+'，剩 $'+fmt(r.p.money)+'</small></span><span class="s">'+r.s.total+'</span></button>').join('');
 }
 function pidx(u){
   const st=room&&room.state; if(st&&st.players){const a=toArr(st.players);const i=a.findIndex(p=>p.uid===u);if(i>=0)return i}
@@ -1727,7 +1881,7 @@ function renderFeed(){
   for(const m of msgs)items.push({ts:typeof m.ts==='number'?m.ts:NOW(),m});
   items.sort((a,b)=>a.ts-b.ts);
   const view=items.slice(-150);
-  const ico={bid:'💰 ',win:'🔨 ',syn:'✨ ',draw:'🃏 ',pass:'🙅 ',tier:'🏅 '};
+  const ico={bid:'💰 ',win:'🔨 ',syn:'✨ ',draw:'🃏 ',pass:'🙅 ',tier:'🏅 ',br:'🧭 ',brdone:'🧭 '};
   feed.innerHTML=view.length?view.map(it=>{
     if(it.m){const m=it.m,mine=m.uid===uid,pi=pidx(m.uid);return '<li class="msg'+(mine?' mine':'')+(pi>=0?' av'+(pi%6):'')+'">'+(mine?'':'<span class="who">'+(pi>=0?'<i class="ava">'+esc([...m.name][0]||'?')+'</i>':'')+'<b>'+esc(m.name)+'</b></span>')+'<span class="bub">'+esc(m.text)+'</span></li>'}
     const l=it.l;
@@ -1804,7 +1958,7 @@ function endDrag(e){
 document.addEventListener('pointerup',endDrag); document.addEventListener('pointercancel',endDrag);
 function infoHTML(S){
   const tab=UI.infoTab;
-  const tabs='<div class="tabs" role="tablist">'+[['pool','卡池'],['syn','羈絆'],['rule','規則']].map(([k,l])=>'<button class="btn small" role="tab" aria-selected="'+(tab===k)+'" data-act="tab" data-v="'+k+'">'+l+'</button>').join('')+'</div>';
+  const tabs='<div class="tabs" role="tablist">'+[['pool','卡池'],['syn','羈絆'],...(brList().length?[['br','支線']]:[]),['rule','規則']].map(([k,l])=>'<button class="btn small" role="tab" aria-selected="'+(tab===k)+'" data-act="tab" data-v="'+k+'">'+l+'</button>').join('')+'</div>';
   let b='';
   const PV=poolView(S);
   if(tab==='pool')b='<div class="pool">'+TIERS.map(t=>'<div class="t'+t.k+'"><b>'+t.cards.filter(c=>PV.includes(c)).length+'</b>'+t.label+' 級，'+(t.score>0?'+':'')+t.score+' 分<br>機率 '+t.prob+'%</div>').join('')+'</div>'+
@@ -1815,7 +1969,14 @@ function infoHTML(S){
       const lb=inP?'還在卡池':oi>=0?esc(S.players[oi].name)+(oi===myIdx(S)?'（你）':'')+' 持有':'已移除';
       return '<div class="gc'+(inP?'':' out')+'">'+cardFace(c,'sm'+(inP?'':' gone'))+'<span class="gl">'+lb+'</span></div>'}).join('');
     return '<div class="gi"><div class="gh"><span class="n">'+esc(s.name)+'</span>'+(o!==undefined?'<span class="o">'+esc(S.players[o].name)+(w?' 已集齊，待觸發':' 已發動')+'</span>':'')+'</div><div class="d">'+esc(s.desc)+'</div><div class="gcards">'+cards+'</div></div>'}).join('')||'<p class="muted">沒有啟用的羈絆。</p>';
-  else b='<dl class="kv"><dt>起始資金</dt><dd class="num">'+fmt(moneySetup(CFG,S.players.length).start)+'</dd><dt>資金換算</dt><dd>'+(RATE?'每 '+fmt(RATE)+' 元＝1 分':'不計分')+'</dd>'+CFG.tsyn.filter(t=>t.on).map(t=>'<dt>'+esc(t.name)+'</dt><dd>'+t.tier+' 級 '+t.th.join('／')+' 張：+'+t.bonus.join('／+')+' 分</dd>').join('')+(CFG.egg.on?'<dt>'+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd>':'')+'<dt>起標價</dt><dd class="num">'+fmt(CFG.openBid)+'</dd><dt>最小加價</dt><dd class="num">'+fmt(CFG.step)+'</dd></dl>'+
+  else if(tab==='br')b=brList().map(br=>{
+    const own=S.players.findIndex(q=>brDone(q,br));
+    const cards=br.cards.map(c=>{const inP=PV.includes(c),oi=S.players.findIndex(q=>q.cards.includes(c));
+      const lb=inP?'還在卡池':oi>=0?esc(S.players[oi].name)+(oi===myIdx(S)?'（你）':'')+' 持有':'已移除';
+      return '<div class="gc'+(inP?'':' out')+'">'+cardFace(c,'sm'+(inP?'':' gone'))+'<span class="gl">'+lb+'</span></div>'}).join('');
+    return '<div class="gi"><div class="gh"><span class="n">🧭 '+esc(br.name)+'</span>'+(own>=0?'<span class="o">'+esc(S.players[own].name)+(own===myIdx(S)?'（你）':'')+' 已達成</span>':S.brShown['b'+br.i]?'<span class="o" style="color:var(--muted)">曾達成，目前失效</span>':'')+'</div>'+
+      '<div class="d">集齊 '+br.cards.length+' 張：+'+CFG.br.pts+' 分'+(CFG.br.extra!==CFG.br.pts?'（同一人第二條起 +'+CFG.br.extra+' 分）':'')+(CFG.br.egg?'，計入'+esc(CFG.egg.name):'')+'</div><div class="gcards wrap">'+cards+'</div></div>'}).join('');
+  else b='<dl class="kv"><dt>起始資金</dt><dd class="num">'+fmt(moneySetup(CFG,S.players.length).start)+'</dd><dt>資金換算</dt><dd>'+(RATE?'每 '+fmt(RATE)+' 元＝1 分':'不計分')+'</dd>'+CFG.tsyn.filter(t=>t.on).map(t=>'<dt>'+esc(t.name)+'</dt><dd>'+t.tier+' 級 '+t.th.join('／')+' 張：+'+t.bonus.join('／+')+' 分</dd>').join('')+(CFG.egg.on?'<dt>'+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd>':'')+(brList().length?'<dt>支線</dt><dd>'+brList().length+' 條，達成 +'+CFG.br.pts+' 分</dd>':'')+'<dt>起標價</dt><dd class="num">'+fmt(CFG.openBid)+'</dd><dt>最小加價</dt><dd class="num">'+fmt(CFG.step)+'</dd></dl>'+
     '<p class="muted" style="font-size:13px">輪流抽卡，抽卡者必須先起標；PASS 後本張卡不能再出價，資金不足會被迫 PASS。卡池抽完時總分最高者獲勝。</p>';
   return sheet('卡池與羈絆',tabs+'<div class="sh-b">'+b+'</div>',true);
 }
@@ -1823,8 +1984,8 @@ function playerHTML(S,i){
   const p=S.players[i]; if(!p)return '';
   const sc=scoreOf(p);
   const cards=p.cards.slice().sort((a,b)=>(TORDER[tierOf(a).k]??9)-(TORDER[tierOf(b).k]??9));
-  const syns=SYN.filter(s=>S.synOwner[s.id]===i).map(s=>'<span class="synb">'+esc(s.name)+(S.armed[s.id]===i?'（待觸發）':'')+'</span>').join('');
-  return sheet(p.name+(p.uid===uid?'（你）':''),'<div class="sh-b"><div class="psum"><div>資金<b>'+fmt(p.money)+'</b></div><div>總分<b>'+sc.total+'</b></div><div>卡片／'+esc(CFG.syn.ge.name)+'／效果<b>'+sc.base+'／'+sc.ge+'／'+sc.adj+'</b></div>'+(RATE?'<div>資金換算<b>'+sc.money+'</b></div>':'')+(sc.tier?'<div>等級羈絆<b>'+sc.tier+'</b></div>':'')+'</div>'+
+  const syns=SYN.filter(s=>S.synOwner[s.id]===i).map(s=>'<span class="synb">'+esc(s.name)+(S.armed[s.id]===i?'（待觸發）':'')+'</span>').join('')+brActive(p).map(b=>'<span class="synb brb">🧭 '+esc(b.name)+'</span>').join('');
+  return sheet(p.name+(p.uid===uid?'（你）':''),'<div class="sh-b"><div class="psum"><div>資金<b>'+fmt(p.money)+'</b></div><div>總分<b>'+sc.total+'</b></div><div>卡片／'+esc(CFG.syn.ge.name)+'／效果<b>'+sc.base+'／'+sc.ge+'／'+sc.adj+'</b></div>'+(RATE?'<div>資金換算<b>'+sc.money+'</b></div>':'')+(sc.tier?'<div>等級羈絆<b>'+sc.tier+'</b></div>':'')+(sc.br?'<div>支線<b>'+sc.br+'</b></div>':'')+'</div>'+
     tierInfo(p).list.map(t=>'<div class="tline"><b>'+esc(t.name)+'</b> '+t.n+' 張'+(t.lv>=0?'，第 '+(t.lv+1)+' 階 +'+t.bonus:'')+(t.next?'（再 '+(t.next-t.n)+' 張升階）':'（已滿階）')+'</div>').join('')+
     (syns?'<div style="margin-bottom:10px">'+syns+'</div>':'')+(p.rebate?'<p class="muted" style="font-size:13px">下次得標返還 '+CFG.syn.gamble.rebate+'%</p>':'')+
     (cards.length?'<div class="cgrid">'+cards.map(c=>'<div data-act="zoom" data-v="'+esc(c)+'">'+cardFace(c,'sm')+'</div>').join('')+'</div>':'<p class="muted">尚未取得卡片。</p>')+'</div>',true);
@@ -1906,7 +2067,7 @@ document.addEventListener('click',async e=>{
     case 'pinfo':UI.sheet={type:'player',v:+v};render();break;
     case 'zoom':UI.sheet={type:'zoom',v};render();break;
     case 'sheet-close':case 'sheet-bg':UI.sheet=null;render();break;
-    case 'reveal-close':nextOverlay();break;
+    case 'reveal-close':if(canCloseFx())nextOverlay();break;
     case 'snd':local.sound=!soundOn();saveLocal();if(soundOn()){ac();play('turn')}lastOv='';render();break;
     case 'sound':UI.sheet={type:'sound'};render();break;
     case 'mus':{local.music=!musicOn();saveLocal();const a=ac();if(a&&a.state!=='running')a.resume().then(musicSync).catch(()=>{});else musicSync();lastOv='';render();break}
@@ -1976,7 +2137,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('focusin',e=>{if(e.target.id==='chatIn'){const sh=document.querySelector('.shell');if(sh)sh.classList.add('typing');if(UI.keypad){UI.keypad=false;render()}}});
 document.addEventListener('focusout',e=>{if(e.target.id==='chatIn'){const sh=document.querySelector('.shell');setTimeout(()=>{if(document.activeElement!==document.getElementById('chatIn')&&sh)sh.classList.remove('typing')},50)}});
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&(UI.sheet||UI.reveal)){UI.sheet=null;if(UI.reveal)nextOverlay();else render();return}
+  if(e.key==='Escape'&&(UI.sheet||UI.reveal)){UI.sheet=null;if(UI.reveal){if(canCloseFx())nextOverlay()}else render();return}
   if(e.key!=='Enter'||e.isComposing||e.keyCode===229)return;
   if(e.target.id==='bidAmt'){e.preventDefault();document.querySelector('[data-act="bid"]')?.click()}
   if(e.target.id==='rc')document.querySelector('[data-act="join"]')?.click();
