@@ -584,6 +584,8 @@ body{background:radial-gradient(120% 60% at 15% -10%,color-mix(in srgb,var(--acc
 .stags{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 1px}
 .stag{font-size:11px;font-weight:700;line-height:1.55;padding:0 7px;border-radius:999px;color:#fff;background:var(--sc,#555);white-space:nowrap}
 .stag.br{background:transparent;color:var(--brc);border:1px dashed var(--brc)}
+.stag.xs{background:transparent;color:#B7791F;border:1px solid #D69E2E}
+.ev.xset .pill{background:#B7791F;color:#fff;border-color:transparent;font-weight:700}
 .ev.brtier .pill{background:#0B6E99;color:#fff;border-color:transparent;font-weight:700}
 .ev.fxnote .pill{border-style:dashed}
 .ev.br .pill{border-color:var(--brc);color:var(--brc)}
@@ -670,6 +672,14 @@ const DEFAULT_CFG={
   money:{mode:'auto',rate:400},
   // 競標時在卡片資訊旁顯示「卡片分數 × 換算價」的金額
   showVal:true,
+  // 跨支線組合：同一位玩家集齊一組卡時獲得金錢（每人每組每局一次，卡被搶走不收回）
+  xset:{on:true,list:[
+    {on:true,name:'三線 S',cards:['何柔','台中姊姊','艾琳娜'],val:30000},
+    {on:true,name:'三線 A',cards:['林文','潔西卡','喵喵'],val:20000},
+    {on:true,name:'三線 B',cards:['小希','安喬','欣蘋'],val:15000},
+    {on:true,name:'三線 C',cards:['張真遇','una','翁寒'],val:10000},
+    {on:true,name:'三線 D',cards:['軍官妹妹','君君','汪'],val:10000}
+  ]},
   // 優先出現的卡：保證在前 by 張內全部出現（各卡平均分散在這段範圍內）；by＝0 等於關閉
   early:{on:true,cards:['小魚','花花','149'],by:15},
   // 集滿羈絆彩蛋
@@ -795,7 +805,20 @@ function cardWorth(S,bi,c){
   const money=S.players.reduce((a,q)=>a+q.money,0);
   const rem=Math.max(1,S.pool.reduce((a,x)=>a+Math.max(0,tierOf(x).score),0)+Math.max(0,t.score));
   let rate=money/rem; if(RATE)rate=Math.min(rate,RATE*0.95);
-  return {worth:pts*rate+bv.cash,rate};
+  return {worth:pts*rate+bv.cash+xsValue(S,bi,c),rate};
+}
+/* 跨支線組合價值（金額）：自己差最後一張全額；有進度且沒被對手卡住時部分計入；對手差最後一張時阻擋 */
+function xsValue(S,bi,c){
+  let v=0;
+  for(const x of xsOf(c)){
+    const rest=x.cards.filter(y=>y!==c), hold=rest.map(y=>holderOf(S,y));
+    if(!S.xsPaid['s'+x.i+'p'+bi]){
+      if(hold.every(h=>h===bi))v+=x.val;
+      else if(hold.every(h=>h===bi||h<0)&&hold.some(h=>h===bi))v+=x.val*0.3*hold.filter(h=>h===bi).length/rest.length;
+    }
+    if(hold.length&&hold.every(h=>h>=0&&h!==bi&&h===hold[0])&&!S.xsPaid['s'+x.i+'p'+hold[0]])v+=x.val*0.4;
+  }
+  return v;
 }
 function botValue(S,bi,c){
   const w=cardWorth(S,bi,c).worth; if(w<=0)return 0;
@@ -886,6 +909,8 @@ function normCfg(c){
   o.money={mode:['auto','fixed','off'].includes(cm.mode)?cm.mode:D.money.mode,rate:numOr(cm.rate,D.money.rate)};
   o.egg={on:ce.on===undefined?D.egg.on:!!ce.on,name:String(ce.name||D.egg.name),need:Math.round(numOr(ce.need,D.egg.need)),money:numOr(ce.money,D.egg.money)};
   o.showVal=c.showVal===undefined?D.showVal:!!c.showVal;
+  const cx=c.xset||{}, cxl=toArr(cx.list);
+  o.xset={on:cx.on===undefined?D.xset.on:!!cx.on,list:D.xset.list.map((d,i)=>{const x=cxl[i]||{};return {on:x.on===undefined?d.on:!!x.on,name:String(x.name||d.name),cards:x.cards===undefined?d.cards.slice():toArr(x.cards).map(y=>String(y).trim()).filter(Boolean),val:numOr(x.val,d.val)}})};
   const cy=c.early||{};
   o.early={on:cy.on===undefined?D.early.on:!!cy.on,cards:cy.cards===undefined?D.early.cards.slice():toArr(cy.cards).map(x=>String(x).trim()).filter(Boolean),by:Math.max(0,Math.round(numOr(cy.by,D.early.by)))};
   const cb=c.br||{}, cl=toArr(cb.list), ctr=toArr(cb.tiers);
@@ -965,6 +990,11 @@ function validateCfg(c){
     if(c.early.by<c.early.cards.length||c.early.by>all.length)e.push('「保證在前幾張內出現」要在 '+c.early.cards.length+'～'+all.length+' 之間。');
   }
   e.push(...brErrors(c));
+  if(c.xset.on){const all=c.tiers.flatMap(t=>t.cards);c.xset.list.forEach(x=>{if(!x.on)return;
+    if(x.cards.length<2)e.push('組合「'+x.name+'」至少要有 2 張卡。');
+    if(new Set(x.cards).size<x.cards.length)e.push('組合「'+x.name+'」的卡片重複。');
+    const miss=x.cards.filter(y=>!all.includes(y)); if(miss.length)e.push('組合「'+x.name+'」的「'+miss.join('、')+'」不在卡池裡。');
+    if(x.val<0)e.push('組合「'+x.name+'」的金額不能是負數。');})}
   return e;
 }
 /* ---------- 支線：設定檢查 ---------- */
@@ -1013,6 +1043,17 @@ const brCount=(p,b)=>b.cards.filter(c=>p.cards.includes(c)).length;
 const brBonus=p=>brList().reduce((a,b)=>{const k=brCount(p,b);return a+brTiers().filter(t=>t.type==='pts'&&k>=t.n).reduce((x,t)=>x+t.val,0)},0);
 const synCountsEgg=id=>!(id==='kick'&&CFG.syn.kick&&!CFG.syn.kick.egg);
 const eggCount=(S,i)=>Object.entries(S.synOwner).filter(([id,v])=>v===i&&synCountsEgg(id)).length+(CFG.br&&CFG.br.on&&CFG.br.egg&&S.players[i]?brActive(S.players[i]).length:0);
+/* ---------- 跨支線組合 ---------- */
+const xsList=()=>CFG.xset&&CFG.xset.on?CFG.xset.list.map((x,i)=>({...x,i})).filter(x=>x.on&&x.cards.length>=2):[];
+const xsOf=c=>xsList().filter(x=>x.cards.includes(c));
+function checkXset(S){
+  for(const x of xsList())S.players.forEach((p,pi)=>{
+    const key='s'+x.i+'p'+pi;
+    if(S.xsPaid[key]||!x.cards.every(c=>p.cards.includes(c)))return;
+    S.xsPaid[key]=true; p.money+=x.val;
+    log(S,p.name+' 湊齊組合「'+x.name+'」，獲得 $'+fmt(x.val),'xset',{s:x.i,p:p.name,cards:x.cards.slice(),txt:'獲得 $'+fmt(x.val)});
+  });
+}
 /* 檢查支線分階獎勵。brPaid 記錄「某支線某階某玩家」是否已發過（金錢只發一次、分數只播一次特效）；brOn 記錄分數型獎勵目前是否生效 */
 function brRewardText(t){return t.type==='money'?'獲得 $'+fmt(t.val):'+'+t.val+' 分'}
 function checkBr(S){
@@ -1040,7 +1081,7 @@ function norm(S){
   S.pool=toArr(S.pool); S.passed=toArr(S.passed); S.log=toArr(S.log); S.synOwner=S.synOwner||{};
   S.queue=toArr(S.queue); S.armed=S.armed||{}; S.events=toArr(S.events); S.evSeq=S.evSeq||0; S.drawn=S.drawn||0;
   for(const k of ['high','actor','last','card','pending','eggOwner','deal'])if(S[k]===undefined)S[k]=null;
-  if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{}; S.brPaid=S.brPaid||{}; S.brOn=S.brOn||{}; S.gePaid=S.gePaid||{};
+  if(S.deal)S.deal=toArr(S.deal); S.tierLv=S.tierLv||{}; S.brPaid=S.brPaid||{}; S.brOn=S.brOn||{}; S.gePaid=S.gePaid||{}; S.xsPaid=S.xsPaid||{};
   S.kickAsk=S.kickAsk||null; S.kicked=S.kicked==null?[]:typeof S.kicked==='number'?[S.kicked]:toArr(S.kicked); S.kickCharges=S.kickCharges||{}; S.kickGot=S.kickGot||{};
   S.rate=S.rate||0;
   if(S.pending)S.pending.opts=toArr(S.pending.opts);
@@ -1209,6 +1250,7 @@ function checkSyn(S,pi){
   checkKick(S);
   checkGe(S);
   checkBr(S);
+  checkXset(S);
 }
 function checkArmed(S){
   const pi=S.armed.hui; if(pi===undefined||pi===null)return;
@@ -1463,6 +1505,7 @@ function onRoomUpdate(){
           if(l.k==='egg')startEgg(l.p,l.n,l.m);
           if(l.k==='synfx'){const sy=CFG.syn[l.sid];if(sy)startSetFx({head:'羈絆湊齊！',name:sy.name,who:l.p,verb:'湊齊',cards:l.cards,reward:synDesc(l.sid,sy),long:true,note:l.p+' 湊齊羈絆「'+sy.name+'」（特效略過）'})}
           if(l.k==='kickfx'){const kk=CFG.syn.kick;startSetFx({head:kk.name+' +'+l.u+' 次',name:kk.name,who:l.p,verb:'持有',cards:l.cards,reward:'目前共 '+l.tot+' 次'})}
+          if(l.k==='xset'){const xx=CFG.xset.list[l.s];if(xx)startSetFx({head:'組合湊齊！',name:xx.name,who:l.p,verb:'湊齊',cards:l.cards,reward:l.txt})}
           if(l.k==='brtier'){const bb=CFG.br.list[l.b];if(bb)startSetFx({head:l.grand?'支線集齊！':'支線獎勵！',name:bb.name,who:l.p,verb:'持有',cards:l.cards,reward:l.txt,grand:l.grand})}
           if(l.k==='win'&&botDriver())botChatOnWin(S,l);
         }
@@ -1843,7 +1886,7 @@ function rulesHTML(c,edit){
     '<h3>等級、機率、分數與角色</h3><div class="tr h"><div>等級</div><div>機率%</div><div>分數</div><div>角色（頓號或逗號分隔）</div></div>'+tiers+
     '<div class="sum muted">有角色的等級機率合計 <b class="num">'+Math.round(sum*10)/10+'%</b>'+(Math.abs(sum-100)>0.01?'，不是 100% 時會按比例換算':'')+'</div>'+
     '<h3>羈絆（取消勾選即停用）</h3>'+syns+
-    brRulesHTML(c,d)+
+    brRulesHTML(c,d)+xsRulesHTML(c,d)+
     '<h3>得標時的彩蛋台詞</h3><p class="muted" style="font-size:13px;margin:0 0 6px">一行一個，格式為「角色名稱：台詞」。有人標中（或免費獲得）該角色時，會跳出彩蛋特效，並以角色身分發到聊天室。抽出時不會觸發。</p>'+
     '<textarea id="cfg-lines" rows="4" placeholder="小七：我是男的喔"'+d+'>'+esc(String(c.linesText||'').trim())+'</textarea>'+
     '<h3>卡片美術圖</h3><p class="muted" style="font-size:13px;margin:0 0 10px">'+(edit?'選擇圖片後會自動裁切成直式卡片大小。圖片會存在你的 Firebase，所有房間共用。':'只有房主可以上傳。')+'</p>'+
@@ -1854,6 +1897,14 @@ function rulesHTML(c,edit){
 }
 function brTierText(short){
   return brTiers().map(t=>t.n+' 張'+(short?' ':'：')+(t.type==='money'?'$'+fmt(t.val):'+'+t.val+' 分')).join(short?'／':'、');
+}
+function xsRulesHTML(c,d){
+  const x=c.xset;
+  return '<h3>跨支線組合</h3><div class="sy'+(x.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-xs-on" '+(x.on?'checked':'')+' aria-label="啟用跨支線組合"'+d+'><span>啟用跨支線組合</span></div>'+
+    '<div class="muted" style="font-size:12px;margin-top:6px">同一位玩家集齊一組的全部卡時獲得金錢。每人每組每局一次；卡被搶走不收回，再集齊也不重發。</div></div>'+
+    x.list.map((s,i)=>'<div class="sy'+(x.on&&s.on?'':' off')+'"><div class="syh"><input type="checkbox" id="cfg-xs'+i+'-on" '+(s.on?'checked':'')+' aria-label="啟用"'+d+'><input type="text" id="cfg-xs'+i+'-name" value="'+esc(s.name)+'" aria-label="組合名稱"'+d+'></div>'+
+      '<div class="sp"><div><label for="cfg-xs'+i+'-val">獲得金額</label><input class="num" type="number" min="0" id="cfg-xs'+i+'-val" value="'+s.val+'"'+d+'></div></div>'+
+      '<div style="margin-top:8px"><label for="cfg-xs'+i+'-cards" style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:2px">卡片（頓號或逗號分隔，至少 2 張）</label><textarea id="cfg-xs'+i+'-cards" rows="2"'+d+'>'+esc(s.cards.join('、'))+'</textarea></div></div>').join('');
 }
 function brRulesHTML(c,d){
   const b=c.br, er=brErrors(c), wr=brWarnings(c);
@@ -1890,6 +1941,7 @@ function readCfgForm(){
   c.br={on:v('cfg-br-on').checked,egg:v('cfg-br-egg').checked,
     tiers:c.br.tiers.map((t,i)=>({n:Math.max(0,Math.round(numOr(v('cfg-brt'+i+'-n').value,t.n))),type:v('cfg-brt'+i+'-type').value,val:numOr(v('cfg-brt'+i+'-val').value,t.val)})),
     list:c.br.list.map((b,i)=>({on:v('cfg-br'+i+'-on').checked,name:v('cfg-br'+i+'-name').value.trim()||DEFAULT_CFG.br.list[i].name,cards:v('cfg-br'+i+'-cards').value.split(/[、,，\n]+/).map(x=>x.trim()).filter(Boolean)}))};
+  c.xset={on:v('cfg-xs-on').checked,list:c.xset.list.map((x,i)=>({on:v('cfg-xs'+i+'-on').checked,name:v('cfg-xs'+i+'-name').value.trim()||DEFAULT_CFG.xset.list[i].name,val:Math.max(0,numOr(v('cfg-xs'+i+'-val').value,x.val)),cards:v('cfg-xs'+i+'-cards').value.split(/[、,，\n]+/).map(y=>y.trim()).filter(Boolean)}))};
   for(const id of SYN_ORDER){
     const s=c.syn[id];
     s.on=v('cfg-s-'+id+'-on').checked;
@@ -2075,7 +2127,7 @@ function cardCash(score){
   return '｜≈ '+(v<0?'-':'')+'$'+fmt(Math.abs(v));
 }
 function cardTags(c){
-  const tags=SYN.filter(s=>s.cards.includes(c)).map(s=>'<span class="stag" style="--sc:'+(SYN_COLOR[s.id]||'#555')+'">'+esc(s.name)+'</span>').concat(brsOf(c).map(b=>'<span class="stag br">🧭 '+esc(b.name)+'</span>'));
+  const tags=SYN.filter(s=>s.cards.includes(c)).map(s=>'<span class="stag" style="--sc:'+(SYN_COLOR[s.id]||'#555')+'">'+esc(s.name)+'</span>').concat(brsOf(c).map(b=>'<span class="stag br">🧭 '+esc(b.name)+'</span>')).concat(xsOf(c).map(x=>'<span class="stag xs">🔗 '+esc(x.name)+'</span>'));
   return tags.length?'<div class="stags">'+tags.join('')+'</div>':'';
 }
 const kickLeft=S=>S&&S.kickAsk?Math.max(0,Math.ceil((S.kickAsk.until-NOW())/1000)):0;
@@ -2128,7 +2180,7 @@ function renderFeed(){
   if(st.phase&&st.phase!=='lobby')for(const n of (UI.notes||[]))items.push({ts:n.ts,n});
   items.sort((a,b)=>a.ts-b.ts);
   const view=items.slice(-150);
-  const ico={bid:'💰 ',win:'🔨 ',syn:'✨ ',draw:'🃏 ',pass:'🙅 ',tier:'🏅 ',br:'🧭 ',brdone:'🧭 ',brtier:'🧭 ',kickfx:'✨ '};
+  const ico={bid:'💰 ',win:'🔨 ',syn:'✨ ',draw:'🃏 ',pass:'🙅 ',tier:'🏅 ',br:'🧭 ',brdone:'🧭 ',brtier:'🧭 ',kickfx:'✨ ',xset:'🔗 '};
   feed.innerHTML=view.length?view.map(it=>{
     if(it.n)return '<li class="ev fxnote"><span class="pill">✨ '+esc(it.n.text)+'</span></li>';
     if(it.m){const m=it.m,mine=m.uid===uid,pi=pidx(m.uid);return '<li class="msg'+(mine?' mine':'')+(pi>=0?' av'+(pi%6):'')+'">'+(mine?'':'<span class="who">'+(pi>=0?'<i class="ava">'+esc([...m.name][0]||'?')+'</i>':'')+'<b>'+esc(m.name)+'</b></span>')+'<span class="bub">'+esc(m.text)+'</span></li>'}
@@ -2206,7 +2258,7 @@ function endDrag(e){
 document.addEventListener('pointerup',endDrag); document.addEventListener('pointercancel',endDrag);
 function infoHTML(S){
   const tab=UI.infoTab;
-  const tabs='<div class="tabs" role="tablist">'+[['pool','卡池'],['syn','羈絆'],...(brList().length?[['br','支線']]:[]),['rule','規則']].map(([k,l])=>'<button class="btn small" role="tab" aria-selected="'+(tab===k)+'" data-act="tab" data-v="'+k+'">'+l+'</button>').join('')+'</div>';
+  const tabs='<div class="tabs" role="tablist">'+[['pool','卡池'],['syn','羈絆'],...(brList().length||xsList().length?[['br','支線']]:[]),['rule','規則']].map(([k,l])=>'<button class="btn small" role="tab" aria-selected="'+(tab===k)+'" data-act="tab" data-v="'+k+'">'+l+'</button>').join('')+'</div>';
   let b='';
   const PV=poolView(S);
   if(tab==='pool')b='<div class="pool">'+TIERS.map(t=>'<div class="t'+t.k+'"><b>'+t.cards.filter(c=>PV.includes(c)).length+'</b>'+t.label+' 級，'+(t.score>0?'+':'')+t.score+' 分<br>機率 '+t.prob+'%</div>').join('')+'</div>'+
@@ -2225,8 +2277,13 @@ function infoHTML(S){
     return '<div class="gi"><div class="gh"><span class="n">🧭 '+esc(br.name)+'</span>'+(own>=0?'<span class="o">'+esc(S.players[own].name)+(own===myIdx(S)?'（你）':'')+' 已集齊</span>':'')+'</div>'+
       '<div class="d">'+brTierText()+(CFG.br.egg?'；集齊計入'+esc(CFG.egg.name):'')+'</div>'+
       (cnt.length?'<div class="tsrow">'+cnt.map(x=>'<span class="tsp'+(brTiers().some(t=>x.k>=t.n)?' on':'')+'">'+esc(x.q.name)+' '+x.k+' 張</span>').join('')+'</div>':'')+
-      '<div class="gcards wrap">'+cards+'</div></div>'}).join('');
-  else b='<dl class="kv"><dt>起始資金</dt><dd class="num">'+fmt(moneySetup(CFG,S.players.length).start)+'</dd><dt>資金換算</dt><dd>'+(RATE?'每 '+fmt(RATE)+' 元＝1 分':'不計分')+'</dd>'+CFG.tsyn.filter(t=>t.on).map(t=>'<dt>'+esc(t.name)+'</dt><dd>'+t.tier+' 級 '+t.th.join('／')+' 張：+'+t.bonus.join('／+')+' 分</dd>').join('')+(CFG.egg.on?'<dt>'+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd>':'')+(CFG.early.on&&CFG.early.cards.length&&CFG.early.by?'<dt>優先出現</dt><dd>'+esc(CFG.early.cards.join('、'))+' 會在前 '+CFG.early.by+' 張內出現</dd>':'')+(brList().length?'<dt>支線</dt><dd>'+brList().length+' 條；'+brTierText()+'</dd>':'')+'<dt>起標價</dt><dd class="num">'+fmt(CFG.openBid)+'</dd><dt>最小加價</dt><dd class="num">'+fmt(CFG.step)+'</dd></dl>'+
+      '<div class="gcards wrap">'+cards+'</div></div>'}).join('')+(xsList().length?'<h3 style="margin:14px 2px 6px;font-size:15px">🔗 跨支線組合</h3>'+xsList().map(x=>{
+      const got=S.players.map((q,qi)=>S.xsPaid['s'+x.i+'p'+qi]?q.name+(qi===myIdx(S)?'（你）':''):'').filter(Boolean);
+      const cards=x.cards.map(c=>{const inP=PV.includes(c),oi=S.players.findIndex(q=>q.cards.includes(c));
+        const lb=inP?'還在卡池':oi>=0?esc(S.players[oi].name)+(oi===myIdx(S)?'（你）':'')+' 持有':'已移除';
+        return '<div class="gc'+(inP?'':' out')+'">'+cardFace(c,'sm'+(inP?'':' gone'))+'<span class="gl">'+lb+'</span></div>'}).join('');
+      return '<div class="gi"><div class="gh"><span class="n">'+esc(x.name)+'</span>'+(got.length?'<span class="o">'+esc(got.join('、'))+' 已領取</span>':'')+'</div><div class="d">集齊 '+x.cards.length+' 張，獲得 $'+fmt(x.val)+'</div><div class="gcards wrap">'+cards+'</div></div>'}).join(''):'');
+  else b='<dl class="kv"><dt>起始資金</dt><dd class="num">'+fmt(moneySetup(CFG,S.players.length).start)+'</dd><dt>資金換算</dt><dd>'+(RATE?'每 '+fmt(RATE)+' 元＝1 分':'不計分')+'</dd>'+CFG.tsyn.filter(t=>t.on).map(t=>'<dt>'+esc(t.name)+'</dt><dd>'+t.tier+' 級 '+t.th.join('／')+' 張：+'+t.bonus.join('／+')+' 分</dd>').join('')+(CFG.egg.on?'<dt>'+esc(CFG.egg.name)+'</dt><dd>集滿 '+CFG.egg.need+' 個羈絆，獲得 '+fmt(CFG.egg.money)+' 元</dd>':'')+(CFG.early.on&&CFG.early.cards.length&&CFG.early.by?'<dt>優先出現</dt><dd>'+esc(CFG.early.cards.join('、'))+' 會在前 '+CFG.early.by+' 張內出現</dd>':'')+(xsList().length?'<dt>跨支線組合</dt><dd>'+xsList().map(x=>esc(x.name)+' $'+fmt(x.val)).join('、')+'</dd>':'')+(brList().length?'<dt>支線</dt><dd>'+brList().length+' 條；'+brTierText()+'</dd>':'')+'<dt>起標價</dt><dd class="num">'+fmt(CFG.openBid)+'</dd><dt>最小加價</dt><dd class="num">'+fmt(CFG.step)+'</dd></dl>'+
     '<p class="muted" style="font-size:13px">輪流抽卡，抽卡者必須先起標；PASS 後本張卡不能再出價，資金不足會被迫 PASS。卡池抽完時總分最高者獲勝。</p>';
   return sheet('卡池與羈絆',tabs+'<div class="sh-b">'+b+'</div>',true);
 }
@@ -2290,6 +2347,7 @@ function kickHints(S,qi,c){
   const q=S.players[qi], out=[];
   for(const s of SYN)if(s.cards.includes(c)&&s.cards.filter(x=>x!==c).every(x=>q.cards.includes(x)))out.push('湊齊「'+s.name+'」');
   for(const b of brsOf(c)){const k=brCount(q,b), t=brTiers().find(t=>t.n===k+1);if(t)out.push('「'+b.name+'」達 '+t.n+' 張（'+(t.type==='money'?'$'+fmt(t.val):'+'+t.val+' 分')+'）')}
+  for(const x of xsOf(c))if(!S.xsPaid['s'+x.i+'p'+qi]&&x.cards.filter(y=>y!==c).every(y=>q.cards.includes(y)))out.push('湊齊「'+x.name+'」（$'+fmt(x.val)+'）');
   {const before=tierInfo(q).total; q.cards.push(c); const after=tierInfo(q).total; q.cards.pop(); if(after>before)out.push('等級羈絆 +'+(after-before)+' 分')}
   {const kk=CFG.syn.kick; if(kk&&kk.on&&kk.cards.includes(c)){const m=kk.cards.filter(x=>x!==c&&q.cards.includes(x)).length+1;if((kk.partN>0&&m===kk.partN&&!S.kickGot['p'+qi+'a'])||(m===kk.cards.length&&!S.kickGot['p'+qi+'b']))out.push('獲得「'+kk.name+'」次數')}}
   return out;
