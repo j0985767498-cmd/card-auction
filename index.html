@@ -612,6 +612,7 @@ body{background:radial-gradient(120% 60% at 15% -10%,color-mix(in srgb,var(--acc
 #kickbar .kb{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:46;display:flex;align-items:center;gap:10px;
   padding:6px 6px 6px 16px;border-radius:999px;background:#1f2a44;color:#fff;font-size:14px;font-weight:700;box-shadow:0 10px 26px -8px rgba(0,0,0,.55);white-space:nowrap;animation:fadein .2s both}
 #kickbar .kb .btn{padding:7px 14px;font-size:13px}
+#kickbar .kb.top{bottom:auto;top:calc(env(safe-area-inset-top,0px) + 14px)}
 </style>
 </head>
 <body>
@@ -2145,6 +2146,7 @@ function gameDockHTML(S){
   if(S.phase==='choose'){
     const c=P[S.pending.pi];
     if(me!==S.pending.pi&&!isOnline(c.uid))return '<div class="note"><span>'+esc(c.name)+' 離線中</span><button class="btn small" data-act="skip">隨機代選</button></div>';
+    if(me===S.pending.pi&&UI.chooseFold===chooseKey(S))return '<div class="note"><span>&nbsp;</span></div>';
     return '';
   }
   const a=S.actor!==null?P[S.actor]:null; if(!a)return '';
@@ -2304,17 +2306,17 @@ function renderOv(S){
   if(UI.confirmLeave)h='<div class="ovl"><div class="modal"><div class="t">離開房間？</div><p>遊戲進行中離開，其他玩家可以代你 PASS；用同一個瀏覽器重新輸入房號即可回來。</p><div style="display:flex;gap:8px"><button class="btn danger" data-act="leave-yes">離開</button><button class="btn primary" data-act="leave-no">留下</button></div></div></div>';
   else if(S&&S.phase==='kickask'&&S.kickAsk&&myIdx(S)===S.kickAsk.pi&&UI.kickFold!==S.kickAsk.until)h=kickModalHTML(S);
   else if(UI.reveal&&S)h='<div class="fxw" data-fx="'+UI.reveal.id+'" data-born="'+UI.reveal.at+'">'+UI.reveal.html+'</div>';
-  else if(S&&S.phase==='choose'&&S.pending&&myIdx(S)===S.pending.pi&&(S.pending.type||'pay')!=='pay'){
+  else if(S&&S.phase==='choose'&&S.pending&&myIdx(S)===S.pending.pi&&(S.pending.type||'pay')!=='pay'&&UI.chooseFold!==chooseKey(S)){
     const pd=S.pending, sn=CFG.syn.sisters.name;
-    if(pd.type==='pick')h='<div class="ovl"><div class="modal synm wide-m"><div class="k">你發動羈絆</div><div class="t">'+esc(sn)+'</div><p>從翻開的卡中挑一張帶走，其餘放回卡池。</p><div class="pick">'+
+    if(pd.type==='pick')h='<div class="ovl"><div class="modal synm wide-m"><div class="kickhd"><div class="k">你發動羈絆</div>'+FOLD_BTN+'</div><div class="t">'+esc(sn)+'</div><p>從翻開的卡中挑一張帶走，其餘放回卡池。可以先收合，看看自己和別人的手牌再決定。</p><div class="pick">'+
       pd.opts.map(c=>'<button class="pickc" data-act="choose" data-v="'+esc(c)+'" aria-label="選擇 '+esc(c)+'">'+cardFace(c,'sm')+'</button>').join('')+'</div></div></div>';
     else{
       const by={}; pd.opts.forEach(o=>{const k=o.indexOf('|'),oi=o.slice(0,k);(by[oi]=by[oi]||[]).push(o)});
-      h='<div class="ovl"><div class="modal synm wide-m"><div class="k">你發動羈絆・卡池已空</div><div class="t">'+esc(sn)+'：搶卡！</div><p>從其他玩家手上挑一張搶過來。</p><div class="stealw">'+
+      h='<div class="ovl"><div class="modal synm wide-m"><div class="kickhd"><div class="k">你發動羈絆・卡池已空</div>'+FOLD_BTN+'</div><div class="t">'+esc(sn)+'：搶卡！</div><p>從其他玩家手上挑一張搶過來。</p><div class="stealw">'+
         Object.entries(by).map(([oi,os])=>'<div class="stealp"><div class="sp-n">'+esc(S.players[+oi].name)+'</div><div class="pick">'+os.map(o=>{const c=o.slice(o.indexOf('|')+1);return '<button class="pickc" data-act="choose" data-v="'+esc(o)+'" aria-label="搶 '+esc(c)+'">'+cardFace(c,'sm')+'</button>'}).join('')+'</div></div>').join('')+'</div></div></div>';
     }
   }
-  else if(S&&S.phase==='choose'&&S.pending&&myIdx(S)===S.pending.pi){
+  else if(S&&S.phase==='choose'&&S.pending&&myIdx(S)===S.pending.pi&&(S.pending.type||'pay')==='pay'){
     const s=CFG.syn.pay;
     h='<div class="ovl"><div class="modal synm"><div class="k">你發動羈絆</div><div class="t">'+esc(s.name)+'</div><p>要指定哪一位玩家轉出 '+fmt(s.amount)+' 元給你？</p><div class="opts">'+
       S.pending.opts.map(i=>'<button class="btn big" data-act="choose" data-v="'+i+'">'+esc(S.players[i].name)+'（$'+fmt(S.players[i].money)+'）</button>').join('')+'</div></div></div>';
@@ -2343,6 +2345,9 @@ function renderOv(S){
   applyPassive(S); kickPaint();
 }
 /* 這張卡對某位玩家的用途：湊齊羈絆、支線達到下一階、等級羈絆升階，方便判斷要讓誰中離 */
+/* 姐妹丼選卡視窗可收合：用這次選擇的內容當作識別，換一次選擇就會重新展開 */
+const FOLD_BTN='<button class="btn kfold" data-act="choose-fold" aria-label="收合，先看看手牌">收合 ▾</button>';
+const chooseKey=S=>S&&S.pending?[S.pending.type||'pay',S.pending.pi,toArr(S.pending.opts).join(','),S.drawn].join('|'):'';
 function kickHints(S,qi,c){
   const q=S.players[qi], out=[];
   for(const s of SYN)if(s.cards.includes(c)&&s.cards.filter(x=>x!==c).every(x=>q.cards.includes(x)))out.push('湊齊「'+s.name+'」');
@@ -2363,7 +2368,10 @@ function kickModalHTML(S){
 function renderKickBar(S){
   const el=document.getElementById('kickbar'); if(!el)return;
   const show=S&&S.phase==='kickask'&&S.kickAsk&&myIdx(S)===S.kickAsk.pi&&UI.kickFold===S.kickAsk.until;
-  const h=show?'<div class="kb" role="status"><span>'+esc(CFG.syn.kick.name)+'・剩 <b class="num kicksec"></b> 秒</span><button class="btn primary" data-act="kick-open">展開選擇</button></div>':'';
+  const showC=S&&S.phase==='choose'&&S.pending&&myIdx(S)===S.pending.pi&&(S.pending.type||'pay')!=='pay'&&UI.chooseFold===chooseKey(S);
+  const top=UI.sheet?' top':'';
+  const h=show?'<div class="kb'+top+'" role="status"><span>'+esc(CFG.syn.kick.name)+'・剩 <b class="num kicksec"></b> 秒</span><button class="btn primary" data-act="kick-open">展開選擇</button></div>':
+    showC?'<div class="kb'+top+'" role="status"><span>'+esc(CFG.syn.sisters.name)+'・'+(S.pending.type==='pick'?'選卡中':'搶卡中')+'</span><button class="btn primary" data-act="choose-open">展開選擇</button></div>':'';
   if(el.innerHTML!==h)el.innerHTML=h;
 }
 /* 倒數只更新數字，不重畫視窗，避免按鈕被替換而點不到 */
@@ -2414,6 +2422,8 @@ document.addEventListener('click',async e=>{
     case 'reveal-close':if(canCloseFx())nextOverlay();break;
     case 'kick-fold':{const st=room&&room.state;if(st&&st.kickAsk){UI.kickFold=st.kickAsk.until;render()}break}
     case 'kick-open':UI.kickFold=null;UI.sheet=null;render();break;
+    case 'choose-fold':{const cs=curS();if(cs&&cs.pending){UI.chooseFold=chooseKey(cs);render()}break}
+    case 'choose-open':UI.chooseFold=null;UI.sheet=null;render();break;
     case 'kick':{const kv=v;tx(S=>(S.phase!=='kickask'||!S.kickAsk||myIdx(S)!==S.kickAsk.pi)?'無法選擇。':gKick(S,kv==='no'?'no':Number(kv)));break}
     case 'snd':local.sound=!soundOn();saveLocal();if(soundOn()){ac();play('turn')}lastOv='';render();break;
     case 'sound':UI.sheet={type:'sound'};render();break;
